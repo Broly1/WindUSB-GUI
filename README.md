@@ -22,7 +22,7 @@ We have provided a smart build script (`build.sh`) that automates the compilatio
 
 1.  **Clone the repo:**
     ```bash
-    git clone [https://github.com/YourUsername/WindUSB-GUI.git](https://github.com/YourUsername/WindUSB-GUI.git)
+    git clone https://github.com/YourUsername/WindUSB-GUI.git
     cd WindUSB-GUI
     ```
 2.  **Set permissions:**
@@ -41,4 +41,8 @@ We have provided a smart build script (`build.sh`) that automates the compilatio
 * **Portability:** The AppImage is designed to bundle its own dependencies to run on other distros (Debian, Fedora, openSUSE), but it is currently in active development.
 
 ## 📦 Download
-Check the [Releases](https://github.com/YourUsername/WindUSB-GUI/releases) section for the latest pre-built **WindUSB-x86_64.AppImage**.
+Check the [Releases](https://github.com/Broly1/WindUSB-GUI/releases) section for the latest pre-built **WindUSB-x86_64.AppImage**.
+
+## ⚖️ License
+
+[GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html).
