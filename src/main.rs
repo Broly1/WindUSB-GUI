@@ -164,16 +164,41 @@ fn escalate_privileges() {
 
 fn build_drive_page(stack: &gtk4::Stack, state: Arc<Mutex<AppState>>) -> gtk4::Box {
     let box_ = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
+
+    // Header for the page
+    let header_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+
     let label = gtk4::Label::new(Some("Select USB Drive"));
     label.add_css_class("title-4");
+    label.set_hexpand(true);
+    label.set_halign(gtk4::Align::Start);
+
+    let refresh_btn = gtk4::Button::from_icon_name("view-refresh-symbolic");
+    refresh_btn.set_tooltip_text(Some("Refresh Drive List"));
+
+    header_box.append(&label);
+    header_box.append(&refresh_btn);
+    box_.append(&header_box);
 
     let list_box = gtk4::ListBox::new();
     list_box.add_css_class("boxed-list");
-    refresh_drives(&list_box);
+    box_.append(&list_box);
 
     let next_btn = gtk4::Button::with_label("Next");
     next_btn.add_css_class("suggested-action");
     next_btn.set_sensitive(false);
+    box_.append(&next_btn);
+
+    // Initial drive scan
+    refresh_drives(&list_box);
+
+    // Refresh Logic
+    let list_box_refresh = list_box.clone();
+    let next_btn_refresh = next_btn.clone();
+    refresh_btn.connect_clicked(move |_| {
+        refresh_drives(&list_box_refresh);
+        next_btn_refresh.set_sensitive(false);
+    });
 
     let next_btn_clone = next_btn.clone();
     let state_clone = state.clone();
@@ -188,9 +213,6 @@ fn build_drive_page(stack: &gtk4::Stack, state: Arc<Mutex<AppState>>) -> gtk4::B
     let stack_clone = stack.clone();
     next_btn.connect_clicked(move |_| { stack_clone.set_visible_child_name("iso"); });
 
-    box_.append(&label);
-    box_.append(&list_box);
-    box_.append(&next_btn);
     box_
 }
 
@@ -383,6 +405,11 @@ fn run_flasher(drive: String, iso: PathBuf, tx: glib::Sender<ProgressMsg>) {
 }
 
 fn refresh_drives(list: &gtk4::ListBox) {
+    // IMPORTANT: Clear the list first
+    while let Some(child) = list.first_child() {
+        list.remove(&child);
+    }
+
     if let Ok(output) = Command::new("lsblk").args(["-pno", "NAME,SIZE,MODEL,TRAN"]).output() {
         let stdout = String::from_utf8_lossy(&output.stdout);
         for line in stdout.lines().filter(|l| l.contains("usb")) {
