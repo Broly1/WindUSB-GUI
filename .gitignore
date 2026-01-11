@@ -1,0 +1,19 @@
+# Rust artifacts
+/target/
+Cargo.lock
+
+# AppImage Tooling & Output
+appimagetool*
+*.AppImage
+artifacts/
+build/
+
+# AppDir content (Ignore the heavy binaries/libs, keep the folders)
+WindUSB.AppDir/bin-local/*
+WindUSB.AppDir/lib-local/*
+
+# Keep the folder structure alive on GitHub
+!WindUSB.AppDir/bin-local/.gitkeep
+!WindUSB.AppDir/lib-local/.gitkeep
+
+# We DO NOT ignore WindUSB.AppDir/usr because it contains the app icon
