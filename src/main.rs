@@ -335,7 +335,7 @@ fn run_flasher(drive: String, iso: PathBuf, tx: glib::Sender<ProgressMsg>) {
     let _ = Command::new("sh").args(["-c", &format!("umount {}*", drive)]).status();
     let _ = Command::new("wipefs").args(["-af", &drive]).status();
 
-    let _ = tx.send(ProgressMsg::Update("Partitioning...".into(), 0.1));
+    let _ = tx.send(ProgressMsg::Update("Partitioning the drive.".into(), 0.1));
     let _ = Command::new("sgdisk").args(["-Z", &drive]).status();
     let _ = Command::new("sgdisk").args(["-n=1:0:0", "-t=1:0700", &drive]).status();
     let _ = Command::new("partprobe").arg(&drive).status();
@@ -343,18 +343,18 @@ fn run_flasher(drive: String, iso: PathBuf, tx: glib::Sender<ProgressMsg>) {
 
     let part = if drive.contains("nvme") { format!("{}p1", drive) } else { format!("{}1", drive) };
 
-    let _ = tx.send(ProgressMsg::Update("Formatting...".into(), 0.2));
+    let _ = tx.send(ProgressMsg::Update("Formatting the drive.".into(), 0.2));
     if !Command::new("mkfs.fat").args(["-F32", "-I", &part]).status().unwrap().success() {
         let _ = tx.send(ProgressMsg::Error("Formatting failed".into()));
         return;
     }
 
-    let _ = tx.send(ProgressMsg::Update("Mounting...".into(), 0.3));
+    let _ = tx.send(ProgressMsg::Update("Mounting the drive.".into(), 0.3));
     let m1 = Command::new("mount").args([&part, &usb_mt]).status();
     let m2 = Command::new("mount").args(["-o", "loop,ro", &iso.to_string_lossy(), &iso_mt]).status();
 
     if m1.is_ok() && m2.is_ok() {
-        let _ = tx.send(ProgressMsg::Update("Splitting WIM...".into(), 0.4));
+        let _ = tx.send(ProgressMsg::Update("Splitting WIM... \nThis might take a while, please hang tight.".into(), 0.4));
         let _ = Command::new("mkdir").args(["-p", &format!("{}/sources", usb_mt)]).status();
 
         let wim_path = format!("{}/sources/install.wim", iso_mt);
@@ -363,7 +363,7 @@ fn run_flasher(drive: String, iso: PathBuf, tx: glib::Sender<ProgressMsg>) {
         let split = Command::new("wimlib-imagex").args(["split", &wim_path, &swm_path, "3500"]).status();
 
         if split.is_ok() && split.unwrap().success() {
-            let _ = tx.send(ProgressMsg::Update("Copying files...".into(), 0.8));
+            let _ = tx.send(ProgressMsg::Update("Copying remaining files... \nThis might take a while, please hang tight.".into(), 0.8));
             let _ = Command::new("rsync").args(["-rltD", "--exclude=sources/install.wim", "--exclude=sources/install.esd", &format!("{}/", iso_mt), &format!("{}/", usb_mt)]).status();
             let _ = Command::new("sync").status();
 
