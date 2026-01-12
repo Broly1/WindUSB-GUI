@@ -1,9 +1,11 @@
 [Desktop Entry]
 Type=Application
 Name=WindUSB
+Comment=Create Windows Bootable USB
+Keywords=windows;usb;flash;boot;
 Exec=AppRun
 Icon=io.github.windusb
-Categories=Utility;System;
 Terminal=false
-Comment=Create Windows Bootable USB
-X-AppImage-Version=1.0.0
+Categories=Utility;System;
+X-AppImage-Version=1.0.0\n0.5
+StartupNotify=true

@@ -7,6 +7,7 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::path::{PathBuf, Path};
 use std::thread;
+use std::sync::mpsc;
 
 struct AppState {
     drive: Option<String>,
@@ -19,16 +20,32 @@ enum ProgressMsg {
     Error(String),
 }
 
-fn main() {
-    if unsafe { libc::getuid() } == 0 {
-        env::set_var("GIO_USE_VFS", "local");
-        env::set_var("GSETTINGS_BACKEND", "memory");
+fn cleanup_processes() {
+    // Kill the specific worker tools
+    let _ = Command::new("pkill").args(["-9", "rsync"]).status();
+    let _ = Command::new("pkill").args(["-9", "wimlib-imagex"]).status();
 
-        if let Ok(appdir) = env::var("APPDIR") {
-            let schema_path = format!("{}/usr/share/glib-2.0/schemas", appdir);
-            env::set_var("GSETTINGS_SCHEMA_DIR", schema_path);
-        }
+    // Only unmount the specific WindUSB temporary mounts, not the whole system
+    let _ = Command::new("sh")
+    .args(["-c", "umount -l /tmp/windusb_* 2>/dev/null"])
+    .status();
+
+    unsafe {
+        let pid = libc::getpid();
+        // Kill the process group to ensure all children die immediately
+        libc::kill(-pid, libc::SIGKILL);
     }
+}
+
+fn main() {
+    env::set_var("GSETTINGS_BACKEND", "memory");
+
+    env::set_var("GTK_USE_PORTAL", "1");
+    env::set_var("GIO_USE_VFS", "local");
+
+    ctrlc::set_handler(move || {
+        cleanup_processes();
+    }).expect("Error setting Ctrl-C handler");
 
     let app = libadwaita::Application::builder()
     .application_id("io.github.windusb")
@@ -61,6 +78,9 @@ fn build_ui(app: &libadwaita::Application) {
         escalate_privileges();
     }
 
+    let style_manager = libadwaita::StyleManager::default();
+    style_manager.set_color_scheme(libadwaita::ColorScheme::PreferDark);
+
     let state = Arc::new(Mutex::new(AppState { drive: None, iso: None }));
 
     let window = libadwaita::ApplicationWindow::builder()
@@ -72,21 +92,13 @@ fn build_ui(app: &libadwaita::Application) {
     .build();
 
     window.connect_close_request(|_| {
-        unsafe { libc::kill(0, libc::SIGTERM); }
-        std::process::exit(0);
+        cleanup_processes();
+        glib::Propagation::Proceed
     });
 
-    let style_manager = libadwaita::StyleManager::default();
-    style_manager.set_color_scheme(libadwaita::ColorScheme::PreferDark);
-
     let root_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
-
     let header_bar = libadwaita::HeaderBar::new();
-    header_bar.set_show_end_title_buttons(false);
-
-    let controls = gtk4::WindowControls::new(gtk4::PackType::End);
-    controls.set_decoration_layout(Some("minimize,close"));
-    header_bar.pack_end(&controls);
+    header_bar.set_show_end_title_buttons(true);
 
     let content_box = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
     content_box.set_margin_start(20);
@@ -98,39 +110,64 @@ fn build_ui(app: &libadwaita::Application) {
     stack.set_transition_type(gtk4::StackTransitionType::SlideLeftRight);
 
     let status_label = gtk4::Label::builder()
-    .label("Ready to start...")
+    .label("Preparing to format...")
     .wrap(true)
     .justify(gtk4::Justification::Center)
     .build();
     let progress_bar = gtk4::ProgressBar::new();
+
+    let percent_label = gtk4::Label::builder()
+    .label("0%")
+    .width_chars(5)
+    .valign(gtk4::Align::Center)
+    .build();
+    percent_label.add_css_class("caption");
 
     let finish_btn = gtk4::Button::with_label("Finish & Exit");
     finish_btn.add_css_class("suggested-action");
     finish_btn.set_visible(false);
     finish_btn.connect_clicked(|_| { std::process::exit(0); });
 
-    let (sender, receiver) = glib::MainContext::channel::<ProgressMsg>(glib::Priority::default());
+    let (sender, receiver) = mpsc::channel::<ProgressMsg>();
 
     let st_c = status_label.clone();
     let pb_c = progress_bar.clone();
     let fb_c = finish_btn.clone();
+    let pl_c = percent_label.clone();
 
-    receiver.attach(None, move |msg| {
-        match msg {
-            ProgressMsg::Update(text, fraction) => {
-                st_c.set_text(&text);
-                pb_c.set_fraction(fraction);
-            }
-            ProgressMsg::Finished => {
-                st_c.set_text("Installation Finished! Please reboot and select the USB drive.");
-                pb_c.set_visible(false);
-                fb_c.set_visible(true);
-            }
-            ProgressMsg::Error(err) => {
-                st_c.set_text(&format!("Error: {}", err));
-                pb_c.add_css_class("error");
-                fb_c.set_label("Close");
-                fb_c.set_visible(true);
+    let is_finished = Arc::new(Mutex::new(false));
+    let last_progress = Arc::new(Mutex::new(0.0));
+    let is_fin_c = is_finished.clone();
+    let lp_c = last_progress.clone();
+
+    glib::timeout_add_local(std::time::Duration::from_millis(100), move || {
+        while let Ok(msg) = receiver.try_recv() {
+            if *is_fin_c.lock().unwrap() { break; }
+            match msg {
+                ProgressMsg::Update(text, fraction) => {
+                    let mut lp = lp_c.lock().unwrap();
+                    if fraction >= *lp || fraction == 0.99 || fraction == 0.01 {
+                        st_c.set_text(&text);
+                        pb_c.set_fraction(fraction);
+                        let p = (fraction * 100.0).floor() as u32;
+                        pl_c.set_text(&format!("{}%", p));
+                        *lp = fraction;
+                    }
+                }
+                ProgressMsg::Finished => {
+                    *is_fin_c.lock().unwrap() = true;
+                    st_c.set_text("Installation Finished! You can now safely unplug the drive.");
+                    pb_c.set_visible(false);
+                    pl_c.set_visible(false);
+                    fb_c.set_visible(true);
+                }
+                ProgressMsg::Error(err) => {
+                    st_c.set_text(&format!("Error: {}", err));
+                    pb_c.add_css_class("error");
+                    pl_c.set_visible(false);
+                    fb_c.set_label("Close");
+                    fb_c.set_visible(true);
+                }
             }
         }
         glib::ControlFlow::Continue
@@ -138,7 +175,7 @@ fn build_ui(app: &libadwaita::Application) {
 
     let drive_page = build_drive_page(&stack, state.clone());
     let iso_page = build_iso_page(&stack, state.clone(), sender);
-    let prog_page = build_progress_page(status_label, progress_bar, finish_btn);
+    let prog_page = build_progress_page(status_label, progress_bar, percent_label, finish_btn);
 
     stack.add_named(&drive_page, Some("drive"));
     stack.add_named(&iso_page, Some("iso"));
@@ -155,35 +192,28 @@ fn build_ui(app: &libadwaita::Application) {
 fn build_drive_page(stack: &gtk4::Stack, state: Arc<Mutex<AppState>>) -> gtk4::Box {
     let box_ = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
     let header_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-
     let label = gtk4::Label::new(Some("Select USB Drive"));
     label.add_css_class("title-4");
     label.set_hexpand(true);
     label.set_halign(gtk4::Align::Start);
-
     let refresh_btn = gtk4::Button::from_icon_name("view-refresh-symbolic");
     header_box.append(&label);
     header_box.append(&refresh_btn);
     box_.append(&header_box);
-
     let list_box = gtk4::ListBox::new();
     list_box.add_css_class("boxed-list");
     box_.append(&list_box);
-
     let next_btn = gtk4::Button::with_label("Next");
     next_btn.add_css_class("suggested-action");
     next_btn.set_sensitive(false);
     box_.append(&next_btn);
-
     refresh_drives(&list_box);
-
     let lb_ref = list_box.clone();
     let nb_ref = next_btn.clone();
     refresh_btn.connect_clicked(move |_| {
         refresh_drives(&lb_ref);
         nb_ref.set_sensitive(false);
     });
-
     let nb_c = next_btn.clone();
     let s_c = state.clone();
     list_box.connect_row_selected(move |_, row| {
@@ -193,46 +223,36 @@ fn build_drive_page(stack: &gtk4::Stack, state: Arc<Mutex<AppState>>) -> gtk4::B
             nb_c.set_sensitive(true);
         }
     });
-
     let st_c = stack.clone();
     next_btn.connect_clicked(move |_| { st_c.set_visible_child_name("iso"); });
-
     box_
 }
 
-fn build_iso_page(stack: &gtk4::Stack, state: Arc<Mutex<AppState>>, sender: glib::Sender<ProgressMsg>) -> gtk4::Box {
+fn build_iso_page(stack: &gtk4::Stack, state: Arc<Mutex<AppState>>, sender: mpsc::Sender<ProgressMsg>) -> gtk4::Box {
     let box_ = gtk4::Box::new(gtk4::Orientation::Vertical, 8);
     let label = gtk4::Label::new(Some("Select Windows ISO"));
     label.add_css_class("title-4");
-
     let list_box = gtk4::ListBox::new();
     list_box.add_css_class("boxed-list");
-
     let iso_row = libadwaita::ActionRow::builder()
     .title("Select ISO File")
     .subtitle("Click to browse")
     .activatable(true)
     .build();
-
     let folder_icon = gtk4::Image::from_icon_name("folder-open-symbolic");
     iso_row.add_prefix(&folder_icon);
     list_box.append(&iso_row);
-
     let btn_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 10);
     btn_box.set_homogeneous(true);
-
     let back_btn = gtk4::Button::with_label("Back");
     let start_btn = gtk4::Button::with_label("Flash USB");
     start_btn.add_css_class("destructive-action");
     start_btn.set_sensitive(false);
-
     let st_c = stack.clone();
     back_btn.connect_clicked(move |_| { st_c.set_visible_child_name("drive"); });
-
     let s_c = state.clone();
     let b_c = start_btn.clone();
     let r_c = iso_row.clone();
-
     iso_row.connect_activated(move |_| {
         let dialog = gtk4::FileChooserDialog::new(
             Some("Select Windows ISO"),
@@ -240,23 +260,19 @@ fn build_iso_page(stack: &gtk4::Stack, state: Arc<Mutex<AppState>>, sender: glib
                                                   gtk4::FileChooserAction::Open,
                                                   &[("_Cancel", gtk4::ResponseType::Cancel), ("_Open", gtk4::ResponseType::Ok)],
         );
-
         let user_home = std::env::var("USER_HOME").unwrap_or_else(|_| "/home".to_string());
         let downloads = format!("{}/Downloads", user_home);
         if Path::new(&downloads).exists() {
             let _ = dialog.set_current_folder(Some(&gio::File::for_path(downloads)));
         }
-
         let filter = gtk4::FileFilter::new();
         filter.set_name(Some("Windows ISOs (*.iso)"));
         filter.add_pattern("*.iso");
         filter.add_pattern("*.ISO");
         dialog.add_filter(&filter);
-
         let s_i = s_c.clone();
         let b_i = b_c.clone();
         let r_i = r_c.clone();
-
         dialog.connect_response(move |d, res| {
             if res == gtk4::ResponseType::Ok {
                 if let Some(file) = d.file() {
@@ -277,7 +293,6 @@ fn build_iso_page(stack: &gtk4::Stack, state: Arc<Mutex<AppState>>, sender: glib
         });
         dialog.show();
     });
-
     let st_flash = stack.clone();
     start_btn.connect_clicked(move |btn| {
         let drive_name = state.lock().unwrap().drive.clone().unwrap_or_default();
@@ -288,11 +303,9 @@ fn build_iso_page(stack: &gtk4::Stack, state: Arc<Mutex<AppState>>, sender: glib
                                                gtk4::ButtonsType::YesNo,
                                                &format!("WARNING: ALL DATA on {} will be DELETED. Proceed?", drive_name)
         );
-
         let st_conf = st_flash.clone();
         let s_conf = state.clone();
         let tx_conf = sender.clone();
-
         confirm.connect_response(move |d, res| {
             if res == gtk4::ResponseType::Yes {
                 st_conf.set_visible_child_name("progress");
@@ -306,7 +319,6 @@ fn build_iso_page(stack: &gtk4::Stack, state: Arc<Mutex<AppState>>, sender: glib
         });
         confirm.show();
     });
-
     btn_box.append(&back_btn);
     btn_box.append(&start_btn);
     box_.append(&label);
@@ -315,67 +327,92 @@ fn build_iso_page(stack: &gtk4::Stack, state: Arc<Mutex<AppState>>, sender: glib
     box_
 }
 
-fn build_progress_page(status: gtk4::Label, bar: gtk4::ProgressBar, finish: gtk4::Button) -> gtk4::Box {
+fn build_progress_page(status: gtk4::Label, bar: gtk4::ProgressBar, percent: gtk4::Label, finish: gtk4::Button) -> gtk4::Box {
     let box_ = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
     box_.set_valign(gtk4::Align::Center);
+    let row = gtk4::Box::new(gtk4::Orientation::Horizontal, 10);
+    row.set_halign(gtk4::Align::Center);
+    bar.set_hexpand(true);
+    bar.set_width_request(300);
+    bar.set_valign(gtk4::Align::Center);
+    row.append(&bar);
+    row.append(&percent);
     box_.append(&status);
-    box_.append(&bar);
+    box_.append(&row);
     box_.append(&finish);
     box_
 }
 
-fn run_flasher(drive: String, iso: PathBuf, tx: glib::Sender<ProgressMsg>) {
-    let rand_id: u32 = unsafe { libc::rand() as u32 };
-    let usb_mt = format!("/tmp/windusb_usb_{}", rand_id);
-    let iso_mt = format!("/tmp/windusb_iso_{}", rand_id);
-
+fn run_flasher(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
+    let iso_size = std::fs::metadata(&iso).unwrap().len() as f64;
+    // Use fixed identifiable paths for easier cleanup on exit
+    let usb_mt = format!("/tmp/windusb_usb_{}", unsafe { libc::rand() });
+    let iso_mt = format!("/tmp/windusb_iso_{}", unsafe { libc::rand() });
     let _ = Command::new("mkdir").args(["-p", &usb_mt, &iso_mt]).status();
 
-    let _ = tx.send(ProgressMsg::Update(format!("Preparing {}...", drive), 0.05));
-    let _ = Command::new("sh").args(["-c", &format!("umount {}*", drive)]).status();
-    let _ = Command::new("wipefs").args(["-af", &drive]).status();
+    let copy_text = "Copying Windows files... \nThis might take a while, please hang tight.".to_string();
 
-    let _ = tx.send(ProgressMsg::Update("Partitioning...".into(), 0.1));
+    let _ = Command::new("sh").args(["-c", &format!("umount -l {}* 2>/dev/null", drive)]).status();
+
+    let _ = Command::new("blockdev").args(["--flushbufs", &drive]).status();
+    let _ = Command::new("wipefs").args(["-af", &drive]).status();
     let _ = Command::new("sgdisk").args(["-Z", &drive]).status();
     let _ = Command::new("sgdisk").args(["-n=1:0:0", "-t=1:0700", &drive]).status();
     let _ = Command::new("partprobe").arg(&drive).status();
-    thread::sleep(std::time::Duration::from_secs(3));
+    thread::sleep(std::time::Duration::from_secs(2));
 
     let part = if drive.contains("nvme") { format!("{}p1", drive) } else { format!("{}1", drive) };
 
-    let _ = tx.send(ProgressMsg::Update("Formatting...".into(), 0.2));
+    let _ = tx.send(ProgressMsg::Update("Formatting partitions...".into(), 0.1));
     if !Command::new("mkfs.fat").args(["-F32", "-I", &part]).status().unwrap().success() {
-        let _ = tx.send(ProgressMsg::Error("Formatting failed".into()));
+        let _ = tx.send(ProgressMsg::Error("Formatting failed. The drive might be busy.".into()));
         return;
     }
 
-    let _ = tx.send(ProgressMsg::Update("Mounting...".into(), 0.3));
     let m1 = Command::new("mount").args([&part, &usb_mt]).status();
     let m2 = Command::new("mount").args(["-o", "loop,ro", &iso.to_string_lossy(), &iso_mt]).status();
 
     if m1.is_ok() && m2.is_ok() {
-        let _ = tx.send(ProgressMsg::Update("Splitting WIM...".into(), 0.4));
+        let tx_monitor = tx.clone();
+        let usb_mt_mon = usb_mt.clone();
+        let active = Arc::new(Mutex::new(true));
+        let active_c = active.clone();
+        let status_c = copy_text.clone();
+
+        thread::spawn(move || {
+            while *active_c.lock().unwrap() && Path::new(&usb_mt_mon).exists() {
+                let output = Command::new("du").args(["-sb", &usb_mt_mon]).output();
+                if let Ok(out) = output {
+                    let stdout = String::from_utf8_lossy(&out.stdout);
+                    if let Some(size_str) = stdout.split_whitespace().next() {
+                        if let Ok(current_bytes) = size_str.parse::<f64>() {
+                            let fraction = (current_bytes / iso_size).min(0.98);
+                            let _ = tx_monitor.send(ProgressMsg::Update(status_c.clone(), fraction));
+                        }
+                    }
+                }
+                thread::sleep(std::time::Duration::from_millis(1000));
+            }
+        });
+
         let _ = Command::new("mkdir").args(["-p", &format!("{}/sources", usb_mt)]).status();
+        let _ = Command::new("rsync")
+        .args(["-rltD", "--exclude=sources/install.wim", "--exclude=sources/install.esd", &format!("{}/", iso_mt), &format!("{}/", usb_mt)])
+        .status();
 
-        let wim_path = format!("{}/sources/install.wim", iso_mt);
-        let swm_path = format!("{}/sources/install.swm", usb_mt);
+        let wim_src = format!("{}/sources/install.wim", iso_mt);
+        let swm_dst = format!("{}/sources/install.swm", usb_mt);
+        let _ = Command::new("wimlib-imagex")
+        .args(["split", &wim_src, &swm_dst, "3800"])
+        .status();
 
-        let split = Command::new("wimlib-imagex").args(["split", &wim_path, &swm_path, "3500"]).status();
+        *active.lock().unwrap() = false;
+        let _ = tx.send(ProgressMsg::Update("Syncing Windows files... \nThis might take a while, please hang tight.".into(), 0.99));
+        let _ = Command::new("sync").status();
 
-        if split.is_ok() && split.unwrap().success() {
-            let _ = tx.send(ProgressMsg::Update("Copying files...".into(), 0.8));
-            let _ = Command::new("rsync").args(["-rltD", "--exclude=sources/install.wim", "--exclude=sources/install.esd", &format!("{}/", iso_mt), &format!("{}/", usb_mt)]).status();
-            let _ = Command::new("sync").status();
-
-            let _ = Command::new("umount").arg("-l").arg(&usb_mt).status();
-            let _ = Command::new("umount").arg("-l").arg(&iso_mt).status();
-            let _ = std::fs::remove_dir(&usb_mt);
-            let _ = std::fs::remove_dir(&iso_mt);
-
-            let _ = tx.send(ProgressMsg::Finished);
-        } else {
-            let _ = tx.send(ProgressMsg::Error("WIM split failed".into()));
-        }
+        let _ = Command::new("umount").arg("-l").arg(&usb_mt).status();
+        let _ = Command::new("umount").arg("-l").arg(&iso_mt).status();
+        let _ = tx.send(ProgressMsg::Finished);
     } else {
         let _ = tx.send(ProgressMsg::Error("Mounting failed".into()));
     }
@@ -405,7 +442,7 @@ fn escalate_privileges() {
     let appimage = env::var("APPIMAGE").expect("APPIMAGE env var not found");
     let mut cmd = Command::new("pkexec");
     cmd.arg("env");
-    let vars = ["DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "APPDIR", "PATH", "LD_LIBRARY_PATH", "APPIMAGE", "XDG_DATA_DIRS"];
+    let vars = ["DISPLAY", "XAUTHORITY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR", "DBUS_SESSION_BUS_ADDRESS", "XDG_SESSION_TYPE", "APPDIR", "PATH", "LD_LIBRARY_PATH", "APPIMAGE", "XDG_DATA_DIRS"];
     for var in vars {
         if let Ok(val) = env::var(var) { cmd.arg(format!("{}={}", var, val)); }
     }

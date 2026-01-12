@@ -39,10 +39,13 @@ download_and_extract_7z() {
     
     echo "📥 Downloading 7-Zip v$latest_version..."
     curl -Lo "7z-linux.tar.xz" "$file_url" || log_error "Failed to download 7zip"
-    tar -xJf "7z-linux.tar.xz" 7zz || log_error "Failed to extract 7zip"
+    
+    # Extract 7zzs instead of 7zz
+    tar -xJf "7z-linux.tar.xz" 7zzs || log_error "Failed to extract 7zip (7zzs)"
     
     mkdir -p "$BIN_DIR"
-    mv 7zz "$BIN_DIR/7z"
+    
+    mv 7zzs "$BIN_DIR/7z"
     chmod +x "$BIN_DIR/7z"
     rm "7z-linux.tar.xz"
 }
