@@ -63,7 +63,13 @@ fn build_ui(app: &libadwaita::Application) {
     style_manager.set_color_scheme(libadwaita::ColorScheme::PreferDark);
 
     let root_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
+    
     let header_bar = libadwaita::HeaderBar::new();
+    header_bar.set_show_end_title_buttons(false);
+
+    let controls = gtk4::WindowControls::new(gtk4::PackType::End);
+    controls.set_decoration_layout(Some("minimize,close"));
+    header_bar.pack_end(&controls);
 
     let content_box = gtk4::Box::new(gtk4::Orientation::Vertical, 12);
     content_box.set_margin_start(20);
