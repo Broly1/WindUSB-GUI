@@ -4,7 +4,11 @@ version = "1.0.0"
 edition = "2021"
 
 [dependencies]
-gtk4 = "0.7"
-libadwaita = "0.5"
 libc = "0.2"
-tempfile = "3.8"
+ctrlc = "3.4"
+glib = "0.18"
+gtk4 = "0.7"
+
+[dependencies.libadwaita]
+version = "0.5"
+features = ["v1_2"]

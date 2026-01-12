@@ -1,101 +1,170 @@
 #!/bin/bash
 set -e
 
-# Configuration
 APP_DIR="WindUSB.AppDir"
-BIN_DIR="$APP_DIR/bin-local"
-LIB_DIR="$APP_DIR/lib-local"
+BIN_DIR="$(pwd)/$APP_DIR/bin-local"
+LIB_DIR="$(pwd)/$APP_DIR/lib-local"
+BUILD_ROOT="$(pwd)/build_temp"
 APPIMAGE_TOOL="./appimagetool-x86_64.appimage"
-BASE_URL_7Z="https://sourceforge.net/projects/sevenzip/files/7-Zip/"
 URL_APPIMAGETOOL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
 
-log_error() { echo "❌ ERROR: $1"; exit 1; }
+export CC="gcc"
+export CXX="g++"
+export CFLAGS="-O2 -static -fno-pie -std=gnu11 -D_GNU_SOURCE"
+export CXXFLAGS="-O2 -static -fno-pie -D_GNU_SOURCE"
+export LDFLAGS="-static -no-pie"
 
-# Handle Clean Flag
-if [[ "$1" == "--clean" ]]; then
-    echo "🧹 Performing full cleanup..."
-    rm -rf "$BIN_DIR" "$LIB_DIR" "$APPIMAGE_TOOL" "*.AppImage"
-    echo "✨ Cleanup complete."
-fi
-
-download_appimagetool() {
-    echo "📥 Downloading appimagetool..."
-    curl -Lo "$APPIMAGE_TOOL" "$URL_APPIMAGETOOL" || log_error "Failed to download appimagetool"
-    chmod +x "$APPIMAGE_TOOL"
+cleanup() {
+    if [ -d "$BUILD_ROOT" ]; then
+        echo "🧹 Auto-cleaning temporary build files..."
+        rm -rf "$BUILD_ROOT"
+    fi
 }
-
-get_latest_version_7z() {
-    page_content=$(curl -sL "$BASE_URL_7Z") || log_error "Failed to fetch 7zip version"
-    latest_version=$(echo "$page_content" | grep -oP '(?<=href="/projects/sevenzip/files/7-Zip/)[0-9]+\.[0-9]+' | sort -V | tail -n 1)
-    printf "%s\n" "$latest_version"
-}
-
-download_and_extract_7z() {
-    latest_version=$(get_latest_version_7z)
-    [ -z "$latest_version" ] && log_error "Could not find latest 7zip version."
-    
-    ver_flat="${latest_version//./}"
-    file_url="${BASE_URL_7Z}${latest_version}/7z${ver_flat}-linux-x64.tar.xz/download"
-    
-    echo "📥 Downloading 7-Zip v$latest_version..."
-    curl -Lo "7z-linux.tar.xz" "$file_url" || log_error "Failed to download 7zip"
-    tar -xJf "7z-linux.tar.xz" 7zz || log_error "Failed to extract 7zip"
-    
-    mkdir -p "$BIN_DIR"
-    mv 7zz "$BIN_DIR/7z"
-    chmod +x "$BIN_DIR/7z"
-    rm "7z-linux.tar.xz"
-}
+trap cleanup EXIT INT TERM
 
 echo "-------------------------------------------------------"
 echo "🚀 WindUSB-GUI Automated Build Script"
 echo "-------------------------------------------------------"
 
-# 1. Automatic Dependency Checks
-[ ! -f "$APPIMAGE_TOOL" ] && download_appimagetool
-[ ! -f "$BIN_DIR/7z" ] && download_and_extract_7z
+read -p "❓ Do you want a clean start? (Wipes contents but keeps .gitkeep) [y/N]: " CLEAN_START
 
-# 2. Decide on Re-bundling
-if [[ "$1" == "--clean" ]]; then
-    REBUNDLE="y"
-elif [ -d "$LIB_DIR" ] && [ "$(ls -A $LIB_DIR)" ]; then
-    echo "💡 TIP: If this is your first build, or you just installed new system tools, select 'y'."
-    read -p "❓ Re-bundle system dependencies (wipe and re-copy)? [y/N]: " REBUNDLE
+if [[ "$CLEAN_START" =~ ^[Yy]$ ]]; then
+    echo "🧹 Performing Deep Build (Full Clean)..."
+    mkdir -p "$BIN_DIR" "$LIB_DIR" "$BUILD_ROOT"
+    find "$BIN_DIR" -mindepth 1 ! -name ".gitkeep" -delete 2>/dev/null || true
+    find "$LIB_DIR" -mindepth 1 ! -name ".gitkeep" -delete 2>/dev/null || true
+    touch "$BIN_DIR/.gitkeep"
+    touch "$LIB_DIR/.gitkeep"
+    rm -rf "$APPIMAGE_TOOL" "$BUILD_ROOT"
+    mkdir -p "$BUILD_ROOT"
+
+    echo "📥 Downloading tools..."
+    curl -Lo "$APPIMAGE_TOOL" "$URL_APPIMAGETOOL"
+    chmod +x "$APPIMAGE_TOOL"
+
+    curl -Lo "7z-linux.tar.xz" "https://www.7-zip.org/a/7z2408-linux-x64.tar.xz"
+    tar -xJf "7z-linux.tar.xz" 7zzs || true
+    [ -f 7zzs ] && mv 7zzs "$BIN_DIR/7z"
+    rm -f "7z-linux.tar.xz"
+
+    ROOT_DIR=$(pwd)
+    cd "$BUILD_ROOT"
+
+    echo "📦 Building wimlib..."
+    wget -qN https://wimlib.net/downloads/wimlib-1.14.4.tar.gz
+    tar -xf wimlib-1.14.4.tar.gz && cd wimlib-1.14.4
+    ./configure --enable-static --disable-shared --without-ntfs-3g --without-fuse
+    make -j$(nproc) -k || true
+    gcc -static -no-pie -O2 $(find programs -name "*imagex.o") $(find programs -name "*common_utils.o") \
+        -I. -I./include .libs/libwim.a -lpthread -o "$BIN_DIR/wimlib-imagex"
+    cd ..
+
+    echo "📦 Building dosfstools..."
+    wget -qN https://github.com/dosfstools/dosfstools/releases/download/v4.2/dosfstools-4.2.tar.gz
+    tar -xf dosfstools-4.2.tar.gz && cd dosfstools-4.2
+    ./configure --enable-compat-symlinks
+    make -j$(nproc)
+    cp src/mkfs.fat "$BIN_DIR/" && cd ..
+
+    echo "📦 Building util-linux..."
+    wget -qN https://mirrors.edge.kernel.org/pub/linux/utils/util-linux/v2.39/util-linux-2.39.3.tar.gz
+    tar -xf util-linux-2.39.3.tar.gz && cd util-linux-2.39.3
+    ./configure --disable-all-programs --enable-wipefs --enable-lsblk --enable-blockdev \
+                --enable-libuuid --enable-libblkid --enable-libsmartcols \
+                --enable-static-programs=wipefs,lsblk,blockdev --enable-all-static \
+                --disable-bash-completion --disable-nls --disable-pie
+    make -j$(nproc)
+    [ -f "misc-utils/.libs/wipefs" ] && cp "misc-utils/.libs/wipefs" "$BIN_DIR/"
+    [ -f "misc-utils/.libs/lsblk" ] && cp "misc-utils/.libs/lsblk" "$BIN_DIR/"
+    [ -f "sys-utils/.libs/blockdev" ] && cp "sys-utils/.libs/blockdev" "$BIN_DIR/"
+    LOCAL_UUID_DIR=$(pwd)
+    cd ..
+
+    echo "📦 Building sgdisk..."
+    wget -qN https://ftp.osuosl.org/pub/blfs/conglomeration/popt/popt-1.19.tar.gz
+    tar -xf popt-1.19.tar.gz && cd popt-1.19
+    ./configure --enable-static --disable-shared
+    make -j$(nproc)
+    POPT_LIB=$(find $(pwd) -name libpopt.a | head -n 1)
+    POPT_INC=$(pwd)
+    cd ..
+    wget -qN https://downloads.sourceforge.net/project/gptfdisk/gptfdisk/1.0.10/gptfdisk-1.0.10.tar.gz
+    tar -xf gptfdisk-1.0.10.tar.gz && cd gptfdisk-1.0.10
+    SOURCES=$(ls *.cc | grep -vE '^(gdisk|cgdisk|fixparts|diskio-windows|gptcurses)\.cc$')
+    g++ -o "$BIN_DIR/sgdisk" $SOURCES -I"$POPT_INC" -I"$POPT_INC/src" -I"$LOCAL_UUID_DIR/libuuid/src" \
+        "$POPT_LIB" "$LOCAL_UUID_DIR/.libs/libuuid.a" -static -static-libgcc -static-libstdc++ -lpthread -no-pie
+    cd ..
+
+    echo "📦 Building partprobe..."
+    wget -qN https://ftp.gnu.org/gnu/parted/parted-3.6.tar.xz
+    tar -xf parted-3.6.tar.xz && cd parted-3.6
+    sed -i 's/do_version ()/do_version (PedDevice** dev, PedDisk** diskp)/g' parted/parted.c
+    ./configure --enable-static --disable-shared --without-readline --disable-device-mapper --disable-nls \
+                LDFLAGS="-static -no-pie -L$LOCAL_UUID_DIR/.libs" \
+                CPPFLAGS="-I$LOCAL_UUID_DIR/libuuid/src" \
+                CFLAGS="-O2 -static -fno-pie" \
+                UUID_LIBS="-luuid" \
+                UUID_CFLAGS="-I$LOCAL_UUID_DIR/libuuid/src"
+    make -j$(nproc)
+    find parted -name partprobe -type f -exec cp {} "$BIN_DIR/" \;
+    cd ..
+
+    cd "$ROOT_DIR"
+    chmod 755 "$BIN_DIR"/* || true
+    for f in "$BIN_DIR"/*; do
+        if file "$f" | grep -q "ELF"; then
+            strip "$f"
+        fi
+    done
 else
-    REBUNDLE="y"
+    echo "⏭️  Fast Build: Skipping tools and library scan..."
 fi
 
-if [[ "$REBUNDLE" =~ ^[Yy]$ ]]; then
-    echo "🧹 Cleaning and bundling dependencies..."
-    mkdir -p "$BIN_DIR" "$LIB_DIR"
-    find "$BIN_DIR" -type f ! -name '7z' ! -name '.gitkeep' -delete
-    rm -rf "$LIB_DIR" && mkdir -p "$LIB_DIR"
-    touch "$BIN_DIR/.gitkeep" "$LIB_DIR/.gitkeep"
+echo "🦀 Compiling Rust source..."
+touch src/main.rs
+env -u LDFLAGS -u CFLAGS -u CXXFLAGS cargo build --release
 
-    echo "🦀 Building Rust app..."
-    cargo build --release
-    install -m755 target/release/windusb-gui "$BIN_DIR/windusb-gui"
+TARGET_BINARY=$(find target/release -maxdepth 1 -type f -executable ! -name "*.so" ! -name "*.dylib" | head -n 1)
+cp "$TARGET_BINARY" "$BIN_DIR/windusb-gui"
+strip "$BIN_DIR/windusb-gui"
 
-    echo "📦 Bundling tools (sgdisk, wimlib, etc.)..."
-    TOOLS=("sgdisk" "wimlib-imagex" "rsync" "mkfs.fat" "wipefs")
-    for tool in "${TOOLS[@]}"; do
-        cp "$(which "$tool")" "$BIN_DIR/"
+if [[ "$CLEAN_START" =~ ^[Yy]$ ]]; then
+    echo "📚 Gathering libraries recursively for maximum portability..."
+    EXCLUDE_LIST="libc.so|libpthread.so|libdl.so|libm.so|librt.so|libgcc_s.so|libstdc++.so|libresolv.so|libcrypt.so|libutil.so|libnsl.so|libGL|libnvidia|libdrm|libX11|libxcb|libasound|libpulse|ld-linux"
+    TEMP_LIBS="all_libs.txt"
+    > "$TEMP_LIBS"
+
+    get_deps() { 
+        ldd "$1" 2>/dev/null | grep "=> /" | awk '{print $3}'; 
+    }
+
+    get_deps "$BIN_DIR/windusb-gui" >> "$TEMP_LIBS"
+
+    echo -n "🔍 Analyzing dependencies: "
+    while read -r lib; do
+        get_deps "$lib" >> "$TEMP_LIBS"
+        count=$(wc -l < "$TEMP_LIBS")
+        echo -ne "\r🔍 Analyzing dependencies: $count found"
+    done < "$TEMP_LIBS"
+    echo -e "\n✅ Analysis complete."
+
+    echo "🚚 Copying libraries..."
+    sort -u "$TEMP_LIBS" | while read -r lib; do
+        if [[ ! "$(basename "$lib")" =~ $EXCLUDE_LIST ]]; then
+            cp -L -n "$lib" "$LIB_DIR/" 2>/dev/null || true
+        fi
     done
-
-    echo "📚 Gathering library dependencies..."
-    EXCLUDE_LIST="libc.so|libpthread.so|libdl.so|libm.so|librt.so|libgcc_s.so|libstdc++.so|libresolv.so|libcrypt.so|libutil.so|libnsl.so|libGL|libnvidia|libdrm|libX11|libxcb|libasound|libpulse"
-    find "$BIN_DIR" -type f -executable | xargs ldd | grep "=> /" | awk '{print $3}' | sort -u | while read -r lib; do
-        [[ ! "$(basename "$lib")" =~ $EXCLUDE_LIST ]] && cp -L "$lib" "$LIB_DIR/"
-    done
-else
-    echo "⏭️  Updating Rust binary only..."
-    cargo build --release
-    install -m755 target/release/windusb-gui "$BIN_DIR/windusb-gui"
+    rm "$TEMP_LIBS"
 fi
 
-# 3. Final Packaging
 echo "🚀 Packaging AppImage..."
-export VERSION=$(grep '^version' Cargo.toml | awk -F '"' '{print $2}')
-$APPIMAGE_TOOL "$APP_DIR" "WindUSB-x86_64.AppImage"
+[ -f "$APP_DIR/AppRun" ] && chmod +x "$APP_DIR/AppRun"
+FINAL_FILENAME="WindUSB-x86_64.AppImage"
+$APPIMAGE_TOOL "$APP_DIR" "$FINAL_FILENAME"
+APP_SIZE=$(du -h "$FINAL_FILENAME" | cut -f1)
 
-echo "✅ Success: WindUSB-x86_64.AppImage"
+echo "-------------------------------------------------------"
+echo "✅ Build Complete!"
+echo "📦 File: $FINAL_FILENAME"
+echo "📏 Size: $APP_SIZE"
+echo "-------------------------------------------------------"
