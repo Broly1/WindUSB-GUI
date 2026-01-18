@@ -16,6 +16,7 @@ if [[ "$1" == "--clean" ]]; then
     echo "🧹 Performing full cleanup..."
     rm -rf "$BIN_DIR" "$LIB_DIR" "$APPIMAGE_TOOL" "*.AppImage"
     echo "✨ Cleanup complete."
+    exit 0
 fi
 
 download_appimagetool() {
@@ -40,11 +41,9 @@ download_and_extract_7z() {
     echo "📥 Downloading 7-Zip v$latest_version..."
     curl -Lo "7z-linux.tar.xz" "$file_url" || log_error "Failed to download 7zip"
     
-    # Extract 7zzs instead of 7zz
     tar -xJf "7z-linux.tar.xz" 7zzs || log_error "Failed to extract 7zip (7zzs)"
     
     mkdir -p "$BIN_DIR"
-    
     mv 7zzs "$BIN_DIR/7z"
     chmod +x "$BIN_DIR/7z"
     rm "7z-linux.tar.xz"
@@ -59,13 +58,11 @@ echo "-------------------------------------------------------"
 [ ! -f "$BIN_DIR/7z" ] && download_and_extract_7z
 
 # 2. Decide on Re-bundling
-if [[ "$1" == "--clean" ]]; then
+if [ ! -d "$LIB_DIR" ] || [ ! "$(ls -A $LIB_DIR)" ]; then
     REBUNDLE="y"
-elif [ -d "$LIB_DIR" ] && [ "$(ls -A $LIB_DIR)" ]; then
+else
     echo "💡 TIP: If this is your first build, or you just installed new system tools, select 'y'."
     read -p "❓ Re-bundle system dependencies (wipe and re-copy)? [y/N]: " REBUNDLE
-else
-    REBUNDLE="y"
 fi
 
 if [[ "$REBUNDLE" =~ ^[Yy]$ ]]; then
@@ -80,7 +77,7 @@ if [[ "$REBUNDLE" =~ ^[Yy]$ ]]; then
     install -m755 target/release/windusb-gui "$BIN_DIR/windusb-gui"
 
     echo "📦 Bundling tools (sgdisk, wimlib, etc.)..."
-    TOOLS=("sgdisk" "wimlib-imagex" "rsync" "mkfs.fat" "wipefs")
+    TOOLS=("sgdisk" "wimlib-imagex" "mkfs.fat" "wipefs")
     for tool in "${TOOLS[@]}"; do
         cp "$(which "$tool")" "$BIN_DIR/"
     done
