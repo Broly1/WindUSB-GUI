@@ -86,6 +86,10 @@ fn get_system_dirty_bytes() -> f64 {
     total_kb * 1024.0
 }
 
+fn device_exists(drive: &str) -> bool {
+    Path::new(drive).exists()
+}
+
 fn run_flasher(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
     let usb_mt = format!("/tmp/windusb_usb_{}", unsafe { libc::rand() });
     let iso_mt = format!("/tmp/windusb_iso_{}", unsafe { libc::rand() });
@@ -123,6 +127,12 @@ fn run_flasher(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
 
     let _ = tx.send(ProgressMsg::Update(format!("Formatting drive {}...", drive), 0.02));
     let _ = Command::new("sh").args(["-c", &format!("umount -l {}* 2>/dev/null", drive)]).status();
+
+    if !device_exists(&drive) {
+        let _ = tx.send(ProgressMsg::Error("Drive disconnected before formatting".into()));
+        return;
+    }
+
     let _ = Command::new("blockdev").args(["--flushbufs", &drive]).status();
     let _ = Command::new("wipefs").args(["-af", &drive]).status();
     let _ = Command::new("sgdisk").args(["-Z", &drive]).status();
@@ -131,12 +141,19 @@ fn run_flasher(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
     thread::sleep(std::time::Duration::from_secs(2));
 
     let part = if drive.contains("nvme") { format!("{}p1", drive) } else { format!("{}1", drive) };
-    if !Command::new("mkfs.fat").args(["-F32", "-I", &part]).status().unwrap().success() {
-        let _ = tx.send(ProgressMsg::Error("Formatting failed. The drive might be busy.".into()));
-        return;
+
+    match Command::new("mkfs.fat").args(["-F32", "-I", &part]).status() {
+        Ok(s) if s.success() => {},
+        _ => {
+            let _ = tx.send(ProgressMsg::Error("Formatting failed. Drive may have been removed.".into()));
+            return;
+        }
     }
 
-    let _ = Command::new("mount").args([&part, &usb_mt]).status();
+    if Command::new("mount").args([&part, &usb_mt]).status().is_err() {
+        let _ = tx.send(ProgressMsg::Error("Failed to mount USB drive.".into()));
+        return;
+    }
     let _ = Command::new("mount").args(["-o", "loop,ro", &iso.to_string_lossy(), &iso_mt]).status();
 
     let is_active = Arc::new(Mutex::new(true));
@@ -147,7 +164,6 @@ fn run_flasher(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
     thread::spawn(move || {
         let mut last_bytes = 0.0;
         let mut last_time = Instant::now();
-
         while *is_active_t.lock().unwrap() {
             let output = Command::new("du").args(["-sb", &usb_mt_t]).output();
             if let Ok(out) = output {
@@ -159,14 +175,11 @@ fn run_flasher(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
                         let now = Instant::now();
                         let elapsed = now.duration_since(last_time).as_secs_f64();
                         let speed_mbs = if elapsed > 0.0 { ((actual_on_disk - last_bytes) / 1024.0 / 1024.0) / elapsed } else { 0.0 };
-
                         last_bytes = actual_on_disk;
                         last_time = now;
-
                         let copy_msg = format!("Extracting Windows files... {:.1} MB/s", speed_mbs.max(0.0));
                         let ratio = (actual_on_disk / iso_size).min(1.0);
                         let current_fraction = 0.05 + (ratio * 0.10);
-
                         let _ = tx_t.send(ProgressMsg::Update(copy_msg, current_fraction.min(0.15)));
                     }
                 }
@@ -175,7 +188,7 @@ fn run_flasher(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
         }
     });
 
-    let _ = Command::new(&z_bin)
+    let status_7z = Command::new(&z_bin)
     .args([
         "x", &iso.to_string_lossy(),
           &format!("-o{}", usb_mt),
@@ -184,36 +197,64 @@ fn run_flasher(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
     ])
     .status();
 
+    if status_7z.is_err() || !status_7z.unwrap().success() || !device_exists(&drive) {
+        *is_active.lock().unwrap() = false;
+        let _ = tx.send(ProgressMsg::Error("Drive removed or 7z error during extraction.".into()));
+        return;
+    }
+
     let src_path = format!("{}/{}", iso_mt, install_file);
     let dst_path = format!("{}/sources/install.{}", usb_mt, extension);
-    let _ = Command::new("wimlib-imagex")
+    let status_wim = Command::new("wimlib-imagex")
     .args(["split", &src_path, &dst_path, "3800"])
     .status();
 
+    if status_wim.is_err() || !status_wim.unwrap().success() || !device_exists(&drive) {
+        *is_active.lock().unwrap() = false;
+        let _ = tx.send(ProgressMsg::Error("Drive removed or wimlib error during split.".into()));
+        return;
+    }
+
     *is_active.lock().unwrap() = false;
 
-    let sync_msg_base = "Copying Windows files to USB drive...";
     let initial_dirty = get_system_dirty_bytes().max(1.0);
-
     let usb_mt_c = usb_mt.clone();
     let iso_mt_c = iso_mt.clone();
     let unmount_done = Arc::new(Mutex::new(false));
+    let unmount_error = Arc::new(Mutex::new(None));
+
     let unmount_done_t = unmount_done.clone();
+    let unmount_err_t = unmount_error.clone();
+    let drive_check = drive.clone();
 
     thread::spawn(move || {
-        let _ = Command::new("sync").status();
-        let _ = Command::new("umount").arg("-l").arg(&usb_mt_c).status();
+        let s1 = Command::new("sync").status();
+        let s2 = Command::new("umount").arg("-l").arg(&usb_mt_c).status();
         let _ = Command::new("umount").arg("-l").arg(&iso_mt_c).status();
+
+        if s1.is_err() || s2.is_err() || !Path::new(&drive_check).exists() {
+            let mut err = unmount_err_t.lock().unwrap();
+            *err = Some("Sync failed. Drive was likely unplugged.".to_string());
+        }
+
         let mut done = unmount_done_t.lock().unwrap();
         *done = true;
     });
 
     let mut spin_idx = 0;
     let spinners = vec!["-", "\\", "|", "/"];
-    
+
     loop {
-        if *unmount_done.lock().unwrap() {
-            break;
+        if *unmount_done.lock().unwrap() { break; }
+
+        if let Some(err_msg) = unmount_error.lock().unwrap().clone() {
+            let _ = tx.send(ProgressMsg::Error(err_msg));
+            return;
+        }
+
+        if !device_exists(&drive) {
+            let _ = tx.send(ProgressMsg::Error("Drive disconnected during final sync.".into()));
+            return;
         }
 
         let current_dirty = get_system_dirty_bytes();
@@ -224,18 +265,16 @@ fn run_flasher(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
             spin_idx = (spin_idx + 1) % 4;
             let _ = tx.send(ProgressMsg::Update(
                 format!("Finalizing installation... {}", spinners[spin_idx]),
-                0.99
+                    0.99
             ));
         } else {
             let mb_remaining = current_dirty / (1024.0 * 1024.0);
-
             let _ = tx.send(ProgressMsg::Update(
-                format!("{} {:.1} MB remaining", sync_msg_base, mb_remaining),
-                progress_val
+                format!("Copying Windows files to USB drive... {:.1} MB remaining", mb_remaining),
+                    progress_val
             ));
         }
-
-        thread::sleep(std::time::Duration::from_millis(150)); 
+        thread::sleep(std::time::Duration::from_millis(150));
     }
 
     let _ = tx.send(ProgressMsg::Finished);
