@@ -2,66 +2,72 @@
 
 **WindUSB-GUI** is a modern, Rust-based graphical tool for creating bootable Windows USB installers on Linux. It is a GTK4/Libadwaita wrapper based on the original [WindUSB CLI bash script](https://github.com/Broly1/Windusb/blob/main/windusb.sh).
 
-This tool handles partitioning, formatting (FAT32), and automatically splitting large `install.wim` files to ensure UEFI compatibility. It also features built-in ISO verification to ensure you are flashing a valid Windows image.
+This tool handles partitioning, formatting (FAT32), and automatically splitting large `install.wim` files to ensure UEFI compatibility.
 
 ## 🛠️ Requirements for Building
 
-If you are building from source on **Arch Linux**, you will need:
+The new build system is designed to be highly independent. You only need the basic development headers on your host machine; the script handles the complex system tools by compiling them from source.
 
-### 1. System Tools
+### 1. Host Build Dependencies
+
+On **Arch Linux**, ensure you have the base development tools:
 
 ```bash
-sudo pacman -S gptfdisk wimlib rsync dosfstools util-linux rust
+sudo pacman -S base-devel rust git
 
 ```
 
-### 2. Automated Build Dependencies
+### 2. Automated Build Engine
 
-The build script will automatically handle the downloading and setup of:
+The `build.sh` script is a "Portable Build Engine" that automatically downloads, compiles, and bundles:
 
-* **appimagetool**: Used to package the final AppImage.
-* **7z (Static 64-bit)**: Used for ISO content verification to prevent flashing errors.
+* **Static System Tools:** `wimlib`, `parted`, `sgdisk`, `util-linux`, and `dosfstools`.
+* **Packaging Tools:** `appimagetool` and a standalone `7-Zip` binary.
+* **Recursive Libraries:** A deep-scan trace of the GTK4/Libadwaita stack to ensure the AppImage runs on any distribution.
 
 ## 🚀 How to Build & Bundle
 
-The provided `build.sh` script automates the compilation, dependency gathering, and packaging.
-
 1. **Clone the repo:**
-
 ```bash
 git clone https://github.com/YourUsername/WindUSB-GUI.git
 cd WindUSB-GUI
 
 ```
 
-2. **Set permissions:**
 
+2. **Run the build script:**
 ```bash
 chmod +x build.sh
-
-```
-
-3. **Run the build:**
-
-```bash
 ./build.sh
 
 ```
 
-> [!IMPORTANT]
-> **First Build:** When prompted to re-bundle system dependencies, **select `y**`. This ensures all necessary `.so` libraries are gathered into the AppImage for the first time.
 
-* **Subsequent Runs:** You can select `n` to skip re-bundling if you only modified the Rust source code; this makes building much faster.
-* **Clean Build:** Run `./build.sh --clean` to wipe all cached tools (7z, appimagetool) and libraries to start from scratch.
+
+### Build Options
+
+* **Clean Start (`y`):** Re-compiles all C tools from source and performs a **Recursive Library Scan**. Use this for your first build or when moving to a different OS.
+* **Rust Only (`n`):** Skips tool compilation and library gathering, only updating the Rust binary. Use this for fast iteration during development.
+* **Git Preservation:** The script automatically preserves `.gitkeep` files in `bin-local` and `lib-local` to maintain repository structure.
+
+## 🤝 Credits & Appreciation
+
+WindUSB-GUI is only possible thanks to the incredible work of the open-source community. We rely on and extend our gratitude to the following projects:
+
+| Project | Purpose | Link |
+| --- | --- | --- |
+| **wimlib** | Handling Windows Imaging files (.wim) | [wimlib.net](https://wimlib.net/) |
+| **GNU Parted** | Partition manipulation and partprobe | [gnu.org/s/parted](https://www.gnu.org/software/parted/) |
+| **GPT Fdisk** | GPT partitioning (sgdisk) | [rodsbooks.com/gdisk](https://www.rodsbooks.com/gdisk/) |
+| **util-linux** | wipefs and block device management | [kernel.org](https://github.com/util-linux/util-linux) |
+| **dosfstools** | FAT32 filesystem creation | [github.com/dosfstools](https://github.com/dosfstools/dosfstools) |
+| **7-Zip** | ISO verification and extraction | [7-zip.org](https://www.7-zip.org/) |
+| **AppImageTool** | Packaging and portability | [appimage.org](https://appimage.org/) |
 
 ## ⚠️ Current Status
 
-* **Tested on:** Arch Linux (x86_64).
-* **Portability:** The AppImage bundles its own dependencies to ensure it runs on major distributions like Debian, Fedora, and openSUSE.
-
-## 📦 Download
-
-Check the [Releases](https://github.com/Broly1/WindUSB-GUI/releases) section for the latest pre-built **WindUSB-x86_64.AppImage**.
+* **Host OS:** Built and tested on Arch Linux.
+* **Portability:** The AppImage uses a **Recursive Dependency Trace** to bundle its own graphics and GUI stack, ensuring compatibility with Pop!_OS, Fedora, Ubuntu, and Debian.
 
 ## ⚖️ License
 
