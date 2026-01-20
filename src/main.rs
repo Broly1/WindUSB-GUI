@@ -70,19 +70,20 @@ fn is_valid_windows_iso(path: &Path) -> bool {
 }
 
 fn get_system_dirty_bytes() -> f64 {
+    let mut total_kb = 0.0;
     if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
         for line in content.lines() {
-            if line.starts_with("Dirty:") {
+            if line.starts_with("Dirty:") || line.starts_with("Writeback:") {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() >= 2 {
                     if let Ok(kb) = parts[1].parse::<f64>() {
-                        return kb * 1024.0;
+                        total_kb += kb;
                     }
                 }
             }
         }
     }
-    0.0
+    total_kb * 1024.0
 }
 
 fn run_flasher(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
@@ -102,16 +103,16 @@ fn run_flasher(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
     };
 
     let list_output = Command::new(&z_bin).args(["l", &iso.to_string_lossy()]).output().ok();
-    let mut install_file = "";
-    let mut extension = "";
+    let mut install_file = String::new();
+    let mut extension = String::new();
     if let Some(out) = list_output {
         let stdout = String::from_utf8_lossy(&out.stdout);
         if stdout.contains("sources/install.wim") {
-            install_file = "sources/install.wim";
-            extension = "swm";
+            install_file = "sources/install.wim".to_string();
+            extension = "swm".to_string();
         } else if stdout.contains("sources/install.esd") {
-            install_file = "sources/install.esd";
-            extension = "esd";
+            install_file = "sources/install.esd".to_string();
+            extension = "esd".to_string();
         }
     }
 
@@ -120,7 +121,7 @@ fn run_flasher(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
         return;
     }
 
-    let _ = tx.send(ProgressMsg::Update(format!("Formatting drive {}...", drive), 0.05));
+    let _ = tx.send(ProgressMsg::Update(format!("Formatting drive {}...", drive), 0.02));
     let _ = Command::new("sh").args(["-c", &format!("umount -l {}* 2>/dev/null", drive)]).status();
     let _ = Command::new("blockdev").args(["--flushbufs", &drive]).status();
     let _ = Command::new("wipefs").args(["-af", &drive]).status();
@@ -144,7 +145,6 @@ fn run_flasher(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
     let usb_mt_t = usb_mt.clone();
 
     thread::spawn(move || {
-        let mut last_fraction = 0.05;
         let mut last_bytes = 0.0;
         let mut last_time = Instant::now();
 
@@ -156,7 +156,6 @@ fn run_flasher(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
                     if let Ok(current_bytes) = size_str.parse::<f64>() {
                         let dirty_bytes = get_system_dirty_bytes();
                         let actual_on_disk = (current_bytes - dirty_bytes).max(0.0);
-
                         let now = Instant::now();
                         let elapsed = now.duration_since(last_time).as_secs_f64();
                         let speed_mbs = if elapsed > 0.0 { ((actual_on_disk - last_bytes) / 1024.0 / 1024.0) / elapsed } else { 0.0 };
@@ -165,16 +164,14 @@ fn run_flasher(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
                         last_time = now;
 
                         let copy_msg = format!("Extracting Windows files... {:.1} MB/s", speed_mbs.max(0.0));
-                        let current_fraction = 0.1 + ((actual_on_disk / iso_size) * 0.80);
+                        let ratio = (actual_on_disk / iso_size).min(1.0);
+                        let current_fraction = 0.05 + (ratio * 0.10);
 
-                        if current_fraction > last_fraction || speed_mbs > 0.1 {
-                            let _ = tx_t.send(ProgressMsg::Update(copy_msg, current_fraction.min(0.90)));
-                            last_fraction = current_fraction;
-                        }
+                        let _ = tx_t.send(ProgressMsg::Update(copy_msg, current_fraction.min(0.15)));
                     }
                 }
             }
-            thread::sleep(std::time::Duration::from_millis(1000));
+            thread::sleep(std::time::Duration::from_millis(500));
         }
     });
 
@@ -195,33 +192,52 @@ fn run_flasher(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
 
     *is_active.lock().unwrap() = false;
 
-    let sync_msg_base = "Flushing system cache to USB drive...";
-    let mut initial_dirty = get_system_dirty_bytes();
-    if initial_dirty < 1.0 { initial_dirty = 1.0; }
+    let sync_msg_base = "Copying Windows files to USB drive...";
+    let initial_dirty = get_system_dirty_bytes().max(1.0);
 
+    let usb_mt_c = usb_mt.clone();
+    let iso_mt_c = iso_mt.clone();
+    let unmount_done = Arc::new(Mutex::new(false));
+    let unmount_done_t = unmount_done.clone();
+
+    thread::spawn(move || {
+        let _ = Command::new("sync").status();
+        let _ = Command::new("umount").arg("-l").arg(&usb_mt_c).status();
+        let _ = Command::new("umount").arg("-l").arg(&iso_mt_c).status();
+        let mut done = unmount_done_t.lock().unwrap();
+        *done = true;
+    });
+
+    let mut spin_idx = 0;
+    let spinners = vec!["-", "\\", "|", "/"];
+    
     loop {
+        if *unmount_done.lock().unwrap() {
+            break;
+        }
+
         let current_dirty = get_system_dirty_bytes();
-        let sync_progress = 0.92 + ((1.0 - (current_dirty / initial_dirty)) * 0.06);
+        let sync_progress = 0.16 + ((1.0 - (current_dirty / initial_dirty)) * 0.83);
+        let progress_val = sync_progress.min(0.99);
 
-        let remaining_text = if current_dirty >= 1024.0 * 1024.0 * 1024.0 {
-            format!("{:.3} GB", current_dirty / (1024.0 * 1024.0 * 1024.0))
+        if current_dirty <= 1024.0 * 1024.0 {
+            spin_idx = (spin_idx + 1) % 4;
+            let _ = tx.send(ProgressMsg::Update(
+                format!("Finalizing installation... {}", spinners[spin_idx]),
+                0.99
+            ));
         } else {
-            format!("{:.0} MB", current_dirty / (1024.0 * 1024.0))
-        };
+            let mb_remaining = current_dirty / (1024.0 * 1024.0);
 
-        let _ = tx.send(ProgressMsg::Update(
-            format!("{} {} remaining", sync_msg_base, remaining_text),
-                sync_progress.min(0.98)
-        ));
+            let _ = tx.send(ProgressMsg::Update(
+                format!("{} {:.1} MB remaining", sync_msg_base, mb_remaining),
+                progress_val
+            ));
+        }
 
-        if current_dirty <= 2048.0 * 1024.0 { break; }
-        thread::sleep(std::time::Duration::from_millis(800));
+        thread::sleep(std::time::Duration::from_millis(150)); 
     }
 
-    let _ = Command::new("sync").status();
-    let _ = tx.send(ProgressMsg::Update("Finalizing...".into(), 0.99));
-    let _ = Command::new("umount").arg("-l").arg(&usb_mt).status();
-    let _ = Command::new("umount").arg("-l").arg(&iso_mt).status();
     let _ = tx.send(ProgressMsg::Finished);
 }
 
@@ -235,11 +251,14 @@ fn build_ui(app: &libadwaita::Application) {
     .invalid-iso { background-color: rgba(237, 51, 59, 0.15); border: 1px solid #ed333b; border-radius: 12px; }
     .invalid-iso label { color: #ff7b72; }
     .title-4 { margin-bottom: 8px; }
+    
+    progressbar progress { background-color: #9141ac; background-image: none; }
+    progressbar trough { background-color: rgba(145, 65, 172, 0.1); }
     ");
     gtk4::style_context_add_provider_for_display(
         &gtk4::gdk::Display::default().expect("Could not connect to a display."),
-                                                 &provider,
-                                                 gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        &provider,
+        gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
     let style_manager = libadwaita::StyleManager::default();
     style_manager.set_color_scheme(libadwaita::ColorScheme::PreferDark);
@@ -403,9 +422,9 @@ fn build_iso_page(stack: &gtk4::Stack, state: Arc<Mutex<AppState>>, sender: mpsc
     iso_row.connect_activated(move |_| {
         let dialog = gtk4::FileChooserDialog::new(
             Some("Select Windows ISO"),
-                                                  Some(&r_c.root().and_downcast::<gtk4::Window>().unwrap()),
-                                                  gtk4::FileChooserAction::Open,
-                                                  &[("_Cancel", gtk4::ResponseType::Cancel), ("_Open", gtk4::ResponseType::Ok)],
+            Some(&r_c.root().and_downcast::<gtk4::Window>().unwrap()),
+            gtk4::FileChooserAction::Open,
+            &[("_Cancel", gtk4::ResponseType::Cancel), ("_Open", gtk4::ResponseType::Ok)],
         );
 
         let user_home = std::env::var("USER_HOME").unwrap_or_else(|_| "/home".to_string());
@@ -449,10 +468,10 @@ fn build_iso_page(stack: &gtk4::Stack, state: Arc<Mutex<AppState>>, sender: mpsc
         let drive_name = state.lock().unwrap().drive.clone().unwrap_or_default();
         let confirm = gtk4::MessageDialog::new(
             Some(&btn.root().and_downcast::<gtk4::Window>().unwrap()),
-                                               gtk4::DialogFlags::MODAL,
-                                               gtk4::MessageType::Warning,
-                                               gtk4::ButtonsType::YesNo,
-                                               &format!("WARNING: ALL DATA on {} will be DELETED. Proceed?", drive_name)
+            gtk4::DialogFlags::MODAL,
+            gtk4::MessageType::Warning,
+            gtk4::ButtonsType::YesNo,
+            &format!("WARNING: ALL DATA on {} will be DELETED. Proceed?", drive_name)
         );
         let st_conf = st_flash.clone();
         let s_conf = state.clone();
@@ -495,8 +514,9 @@ fn build_progress_page(status: gtk4::Label, bar: gtk4::ProgressBar, percent: gtk
     cancel.set_halign(gtk4::Align::Center);
     cancel.set_width_request(160);
     box_.append(&cancel);
+    
     finish.set_halign(gtk4::Align::Center);
-    finish.set_width_request(160);
+    finish.set_width_request(120); 
     box_.append(&finish);
     box_
 }

@@ -1,7 +1,6 @@
 #!/bin/bash
 set -e
 
-# --- Configuration ---
 APP_DIR="WindUSB.AppDir"
 BIN_DIR="$(pwd)/$APP_DIR/bin-local"
 LIB_DIR="$(pwd)/$APP_DIR/lib-local"
@@ -9,14 +8,12 @@ BUILD_ROOT="$(pwd)/build_temp"
 APPIMAGE_TOOL="./appimagetool-x86_64.appimage"
 URL_APPIMAGETOOL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
 
-# --- Global Compiler Flags (For C Tools only) ---
 export CC="gcc"
 export CXX="g++"
 export CFLAGS="-O2 -static -fno-pie -std=gnu11 -D_GNU_SOURCE"
 export CXXFLAGS="-O2 -static -fno-pie -D_GNU_SOURCE"
 export LDFLAGS="-static -no-pie"
 
-# --- 1. Cleanup Trap ---
 cleanup() {
     if [ -d "$BUILD_ROOT" ]; then
         echo "🧹 Auto-cleaning temporary build files..."
@@ -29,45 +26,30 @@ echo "-------------------------------------------------------"
 echo "🚀 WindUSB-GUI Automated Build Script"
 echo "-------------------------------------------------------"
 
-# --- 2. The Main Decision ---
 read -p "❓ Do you want a clean start? (Wipes contents but keeps .gitkeep) [y/N]: " CLEAN_START
 
 if [[ "$CLEAN_START" =~ ^[Yy]$ ]]; then
-    echo "🧹 Cleaning directories while preserving .gitkeep..."
-    
-    # Create directories if they don't exist
+    echo "🧹 Performing Deep Build (Full Clean)..."
     mkdir -p "$BIN_DIR" "$LIB_DIR" "$BUILD_ROOT"
-
-    # Delete everything inside BIN_DIR and LIB_DIR EXCEPT .gitkeep
     find "$BIN_DIR" -mindepth 1 ! -name ".gitkeep" -delete 2>/dev/null || true
     find "$LIB_DIR" -mindepth 1 ! -name ".gitkeep" -delete 2>/dev/null || true
-    
-    # Ensure .gitkeep files exist
     touch "$BIN_DIR/.gitkeep"
     touch "$LIB_DIR/.gitkeep"
-
-    # Delete appimagetool and temp build root
     rm -rf "$APPIMAGE_TOOL" "$BUILD_ROOT"
     mkdir -p "$BUILD_ROOT"
 
-    # --- 3. Download AppImageTool ---
-    echo "📥 Downloading appimagetool..."
+    echo "📥 Downloading tools..."
     curl -Lo "$APPIMAGE_TOOL" "$URL_APPIMAGETOOL"
     chmod +x "$APPIMAGE_TOOL"
 
-    # --- 4. Download 7-Zip ---
-    echo "📥 Downloading 7-Zip..."
     curl -Lo "7z-linux.tar.xz" "https://www.7-zip.org/a/7z2408-linux-x64.tar.xz"
     tar -xJf "7z-linux.tar.xz" 7zzs || true
     [ -f 7zzs ] && mv 7zzs "$BIN_DIR/7z"
     rm -f "7z-linux.tar.xz"
 
-    # --- 5. Build Static Tools (C/C++) ---
-    echo "🏗️ Starting static build of system tools..."
     ROOT_DIR=$(pwd)
     cd "$BUILD_ROOT"
 
-    # wimlib
     echo "📦 Building wimlib..."
     wget -qN https://wimlib.net/downloads/wimlib-1.14.4.tar.gz
     tar -xf wimlib-1.14.4.tar.gz && cd wimlib-1.14.4
@@ -77,7 +59,6 @@ if [[ "$CLEAN_START" =~ ^[Yy]$ ]]; then
         -I. -I./include .libs/libwim.a -lpthread -o "$BIN_DIR/wimlib-imagex"
     cd ..
 
-    # dosfstools
     echo "📦 Building dosfstools..."
     wget -qN https://github.com/dosfstools/dosfstools/releases/download/v4.2/dosfstools-4.2.tar.gz
     tar -xf dosfstools-4.2.tar.gz && cd dosfstools-4.2
@@ -85,7 +66,6 @@ if [[ "$CLEAN_START" =~ ^[Yy]$ ]]; then
     make -j$(nproc)
     cp src/mkfs.fat "$BIN_DIR/" && cd ..
 
-    # util-linux
     echo "📦 Building util-linux..."
     wget -qN https://mirrors.edge.kernel.org/pub/linux/utils/util-linux/v2.39/util-linux-2.39.3.tar.gz
     tar -xf util-linux-2.39.3.tar.gz && cd util-linux-2.39.3
@@ -100,7 +80,6 @@ if [[ "$CLEAN_START" =~ ^[Yy]$ ]]; then
     LOCAL_UUID_DIR=$(pwd)
     cd ..
 
-    # gptfdisk (sgdisk)
     echo "📦 Building sgdisk..."
     wget -qN https://ftp.osuosl.org/pub/blfs/conglomeration/popt/popt-1.19.tar.gz
     tar -xf popt-1.19.tar.gz && cd popt-1.19
@@ -109,7 +88,6 @@ if [[ "$CLEAN_START" =~ ^[Yy]$ ]]; then
     POPT_LIB=$(find $(pwd) -name libpopt.a | head -n 1)
     POPT_INC=$(pwd)
     cd ..
-
     wget -qN https://downloads.sourceforge.net/project/gptfdisk/gptfdisk/1.0.10/gptfdisk-1.0.10.tar.gz
     tar -xf gptfdisk-1.0.10.tar.gz && cd gptfdisk-1.0.10
     SOURCES=$(ls *.cc | grep -vE '^(gdisk|cgdisk|fixparts|diskio-windows|gptcurses)\.cc$')
@@ -117,7 +95,6 @@ if [[ "$CLEAN_START" =~ ^[Yy]$ ]]; then
         "$POPT_LIB" "$LOCAL_UUID_DIR/.libs/libuuid.a" -static -static-libgcc -static-libstdc++ -lpthread -no-pie
     cd ..
 
-    # Parted
     echo "📦 Building partprobe..."
     wget -qN https://ftp.gnu.org/gnu/parted/parted-3.6.tar.xz
     tar -xf parted-3.6.tar.xz && cd parted-3.6
@@ -133,9 +110,6 @@ if [[ "$CLEAN_START" =~ ^[Yy]$ ]]; then
     cd ..
 
     cd "$ROOT_DIR"
-    
-    # Strip tools
-    echo "✂️  Stripping debug symbols from tools..."
     chmod 755 "$BIN_DIR"/* || true
     for f in "$BIN_DIR"/*; do
         if file "$f" | grep -q "ELF"; then
@@ -143,68 +117,50 @@ if [[ "$CLEAN_START" =~ ^[Yy]$ ]]; then
         fi
     done
 else
-    echo "⏭️  Skipping tool compilation. Using existing binaries..."
+    echo "⏭️  Fast Build: Skipping tools and library scan..."
 fi
 
-# --- 6. Build Rust App ---
 echo "🦀 Compiling Rust source..."
 touch src/main.rs
 env -u LDFLAGS -u CFLAGS -u CXXFLAGS cargo build --release
 
-mkdir -p "$BIN_DIR"
 TARGET_BINARY=$(find target/release -maxdepth 1 -type f -executable ! -name "*.so" ! -name "*.dylib" | head -n 1)
+cp "$TARGET_BINARY" "$BIN_DIR/windusb-gui"
+strip "$BIN_DIR/windusb-gui"
 
-if [ -n "$TARGET_BINARY" ]; then
-    cp "$TARGET_BINARY" "$BIN_DIR/windusb-gui"
-    strip "$BIN_DIR/windusb-gui"
-    echo "✅ Binary installed to $BIN_DIR/windusb-gui"
-else
-    echo "❌ ERROR: No binary found."
-    exit 1
+if [[ "$CLEAN_START" =~ ^[Yy]$ ]]; then
+    echo "📚 Gathering libraries recursively for maximum portability..."
+    EXCLUDE_LIST="libc.so|libpthread.so|libdl.so|libm.so|librt.so|libgcc_s.so|libstdc++.so|libresolv.so|libcrypt.so|libutil.so|libnsl.so|libGL|libnvidia|libdrm|libX11|libxcb|libasound|libpulse|ld-linux"
+    TEMP_LIBS="all_libs.txt"
+    > "$TEMP_LIBS"
+
+    get_deps() { 
+        ldd "$1" 2>/dev/null | grep "=> /" | awk '{print $3}'; 
+    }
+
+    get_deps "$BIN_DIR/windusb-gui" >> "$TEMP_LIBS"
+
+    echo -n "🔍 Analyzing dependencies: "
+    while read -r lib; do
+        get_deps "$lib" >> "$TEMP_LIBS"
+        count=$(wc -l < "$TEMP_LIBS")
+        echo -ne "\r🔍 Analyzing dependencies: $count found"
+    done < "$TEMP_LIBS"
+    echo -e "\n✅ Analysis complete."
+
+    echo "🚚 Copying libraries..."
+    sort -u "$TEMP_LIBS" | while read -r lib; do
+        if [[ ! "$(basename "$lib")" =~ $EXCLUDE_LIST ]]; then
+            cp -L -n "$lib" "$LIB_DIR/" 2>/dev/null || true
+        fi
+    done
+    rm "$TEMP_LIBS"
 fi
 
-# --- 7. Recursive Library Gathering ---
-echo "📚 Gathering libraries recursively for maximum portability..."
-mkdir -p "$LIB_DIR"
-EXCLUDE_LIST="libc.so|libpthread.so|libdl.so|libm.so|librt.so|libgcc_s.so|libstdc++.so|libresolv.so|libcrypt.so|libutil.so|libnsl.so|libGL|libnvidia|libdrm|libX11|libxcb|libasound|libpulse|ld-linux"
-
-TEMP_LIBS="all_libs.txt"
-> "$TEMP_LIBS"
-
-# Helper to trace dependencies and silence permission warnings
-get_deps() { 
-    ldd "$1" 2>/dev/null | grep "=> /" | awk '{print $3}'; 
-}
-
-# Initial scan of the Rust binary
-get_deps "$BIN_DIR/windusb-gui" >> "$TEMP_LIBS"
-
-# Recursive Deep Scan with real-time counter
-echo -n "🔍 Analyzing dependencies: "
-while read -r lib; do
-    get_deps "$lib" >> "$TEMP_LIBS"
-    count=$(wc -l < "$TEMP_LIBS")
-    echo -ne "\r🔍 Analyzing dependencies: $count found"
-done < "$TEMP_LIBS"
-echo -e "\n✅ Analysis complete."
-
-# Final copy to lib-local
-echo "🚚 Copying libraries..."
-sort -u "$TEMP_LIBS" | while read -r lib; do
-    if [[ ! "$(basename "$lib")" =~ $EXCLUDE_LIST ]]; then
-        cp -L -n "$lib" "$LIB_DIR/" 2>/dev/null || true
-    fi
-done
-rm "$TEMP_LIBS"
-
-# --- 8. Final Packaging ---
 echo "🚀 Packaging AppImage..."
 [ -f "$APP_DIR/AppRun" ] && chmod +x "$APP_DIR/AppRun"
-
 FINAL_FILENAME="WindUSB-x86_64.AppImage"
 $APPIMAGE_TOOL "$APP_DIR" "$FINAL_FILENAME"
-
-# Display size info
 APP_SIZE=$(du -h "$FINAL_FILENAME" | cut -f1)
 
 echo "-------------------------------------------------------"
