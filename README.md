@@ -4,6 +4,14 @@
 
 This tool handles partitioning, formatting (FAT32), and automatically splitting large `install.wim` files to ensure UEFI compatibility.
 
+### 📸 Screenshots
+
+| 1: Device Selection | 2: Wrong ISO Error |
+|:---:|:---:|
+| <img src="https://raw.githubusercontent.com/Broly1/images/main/windusb-gui/Screenshot_20260211_114628.png" width="400"> | <img src="https://raw.githubusercontent.com/Broly1/images/main/windusb-gui/Screenshot_20260211_114638.png" width="400"> |
+| **3: Valid Windows ISO** | **4: Flashing Process** |
+| <img src="https://raw.githubusercontent.com/Broly1/images/main/windusb-gui/Screenshot_20260211_114653.png" width="400"> | <img src="https://raw.githubusercontent.com/Broly1/images/main/windusb-gui/Screenshot_20260211_114714.png" width="400"> |
+
 ## 🛠️ Requirements for Building
 
 The new build system is designed to be highly independent. You only need the basic development headers on your host machine; the script handles the complex system tools by compiling them from source.
