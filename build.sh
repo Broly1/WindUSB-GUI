@@ -1,18 +1,25 @@
 #!/bin/bash
 set -e
+clear
 
 APP_DIR="WindUSB.AppDir"
 BIN_DIR="$(pwd)/$APP_DIR/bin-local"
 LIB_DIR="$(pwd)/$APP_DIR/lib-local"
 BUILD_ROOT="$(pwd)/build_temp"
 APPIMAGE_TOOL="./appimagetool-x86_64.appimage"
-URL_APPIMAGETOOL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+
+URL_APPIMAGETOOL=$(curl -s https://api.github.com/repos/AppImage/appimagetool/releases/latest | grep "browser_download_url.*x86_64.AppImage\"" | cut -d '"' -f 4 | head -n 1)
+LATEST_7Z_VER=$(curl -s https://www.7-zip.org/download.html | grep -oP '7z\d{4}-linux-x64.tar.xz' | head -n 1 | grep -oP '\d{4}')
+URL_7Z="https://www.7-zip.org/a/7z${LATEST_7Z_VER}-linux-x64.tar.xz"
+URL_WIMLIB="https://wimlib.net/downloads/wimlib-1.14.5.tar.gz"
+URL_DOSFSTOOLS="https://github.com/dosfstools/dosfstools/releases/download/v4.2/dosfstools-4.2.tar.gz"
+URL_UTIL_LINUX="https://mirrors.edge.kernel.org/pub/linux/utils/util-linux/v2.41/util-linux-2.41.3.tar.gz"
+URL_POPT="https://ftp.osuosl.org/pub/blfs/conglomeration/popt/popt-1.19.tar.gz"
+URL_GPTFDISK="https://downloads.sourceforge.net/project/gptfdisk/gptfdisk/1.0.10/gptfdisk-1.0.10.tar.gz"
+URL_PARTED="https://ftp.gnu.org/gnu/parted/parted-3.6.tar.xz"
 
 export CC="gcc"
 export CXX="g++"
-export CFLAGS="-O2 -static -fno-pie -std=gnu11 -D_GNU_SOURCE"
-export CXXFLAGS="-O2 -static -fno-pie -D_GNU_SOURCE"
-export LDFLAGS="-static -no-pie"
 
 cleanup() {
     if [ -d "$BUILD_ROOT" ]; then
@@ -26,9 +33,16 @@ echo "-------------------------------------------------------"
 echo "🚀 WindUSB-GUI Automated Build Script"
 echo "-------------------------------------------------------"
 
-read -p "❓ Do you want a clean start? (Wipes contents but keeps .gitkeep) [y/N]: " CLEAN_START
+while true; do
+    read -p "❓ Perform clean start? (Builds all latest binaries) [y/n]: " yn
+    case $yn in
+        [Yy]* ) CLEAN_START=true; break;;
+        [Nn]* ) CLEAN_START=false; break;;
+        * ) echo "Please answer y or n.";;
+    esac
+done
 
-if [[ "$CLEAN_START" =~ ^[Yy]$ ]]; then
+if [ "$CLEAN_START" = true ]; then
     echo "🧹 Performing Deep Build (Full Clean)..."
     mkdir -p "$BIN_DIR" "$LIB_DIR" "$BUILD_ROOT"
     find "$BIN_DIR" -mindepth 1 ! -name ".gitkeep" -delete 2>/dev/null || true
@@ -42,7 +56,7 @@ if [[ "$CLEAN_START" =~ ^[Yy]$ ]]; then
     curl -Lo "$APPIMAGE_TOOL" "$URL_APPIMAGETOOL"
     chmod +x "$APPIMAGE_TOOL"
 
-    curl -Lo "7z-linux.tar.xz" "https://www.7-zip.org/a/7z2408-linux-x64.tar.xz"
+    curl -Lo "7z-linux.tar.xz" "$URL_7Z"
     tar -xJf "7z-linux.tar.xz" 7zzs || true
     [ -f 7zzs ] && mv 7zzs "$BIN_DIR/7z"
     rm -f "7z-linux.tar.xz"
@@ -51,8 +65,8 @@ if [[ "$CLEAN_START" =~ ^[Yy]$ ]]; then
     cd "$BUILD_ROOT"
 
     echo "📦 Building wimlib..."
-    wget -qN https://wimlib.net/downloads/wimlib-1.14.4.tar.gz
-    tar -xf wimlib-1.14.4.tar.gz && cd wimlib-1.14.4
+    wget -qN "$URL_WIMLIB"
+    tar -xf wimlib-1.14.5.tar.gz && cd wimlib-1.14.5
     ./configure --enable-static --disable-shared --without-ntfs-3g --without-fuse
     make -j$(nproc) -k || true
     gcc -static -no-pie -O2 $(find programs -name "*imagex.o") $(find programs -name "*common_utils.o") \
@@ -60,35 +74,34 @@ if [[ "$CLEAN_START" =~ ^[Yy]$ ]]; then
     cd ..
 
     echo "📦 Building dosfstools..."
-    wget -qN https://github.com/dosfstools/dosfstools/releases/download/v4.2/dosfstools-4.2.tar.gz
+    wget -qN "$URL_DOSFSTOOLS"
     tar -xf dosfstools-4.2.tar.gz && cd dosfstools-4.2
     ./configure --enable-compat-symlinks
     make -j$(nproc)
     cp src/mkfs.fat "$BIN_DIR/" && cd ..
 
     echo "📦 Building util-linux..."
-    wget -qN https://mirrors.edge.kernel.org/pub/linux/utils/util-linux/v2.39/util-linux-2.39.3.tar.gz
-    tar -xf util-linux-2.39.3.tar.gz && cd util-linux-2.39.3
+    wget -qN "$URL_UTIL_LINUX"
+    tar -xf util-linux-2.41.3.tar.gz && cd util-linux-2.41.3
     ./configure --disable-all-programs --enable-wipefs --enable-lsblk --enable-blockdev \
-                --enable-libuuid --enable-libblkid --enable-libsmartcols \
-                --enable-static-programs=wipefs,lsblk,blockdev --enable-all-static \
-                --disable-bash-completion --disable-nls --disable-pie
+                --enable-libuuid --enable-libblkid --enable-libsmartcols --enable-libmount \
+                --disable-bash-completion --disable-nls --without-python --without-systemd --without-udev
     make -j$(nproc)
-    [ -f "misc-utils/.libs/wipefs" ] && cp "misc-utils/.libs/wipefs" "$BIN_DIR/"
-    [ -f "misc-utils/.libs/lsblk" ] && cp "misc-utils/.libs/lsblk" "$BIN_DIR/"
-    [ -f "sys-utils/.libs/blockdev" ] && cp "sys-utils/.libs/blockdev" "$BIN_DIR/"
+    find misc-utils -name wipefs -type f -executable -exec cp {} "$BIN_DIR/" \;
+    find misc-utils -name lsblk -type f -executable -exec cp {} "$BIN_DIR/" \;
+    find sys-utils -name blockdev -type f -executable -exec cp {} "$BIN_DIR/" \;
     LOCAL_UUID_DIR=$(pwd)
     cd ..
 
     echo "📦 Building sgdisk..."
-    wget -qN https://ftp.osuosl.org/pub/blfs/conglomeration/popt/popt-1.19.tar.gz
+    wget -qN "$URL_POPT"
     tar -xf popt-1.19.tar.gz && cd popt-1.19
     ./configure --enable-static --disable-shared
     make -j$(nproc)
     POPT_LIB=$(find $(pwd) -name libpopt.a | head -n 1)
     POPT_INC=$(pwd)
     cd ..
-    wget -qN https://downloads.sourceforge.net/project/gptfdisk/gptfdisk/1.0.10/gptfdisk-1.0.10.tar.gz
+    wget -qN "$URL_GPTFDISK"
     tar -xf gptfdisk-1.0.10.tar.gz && cd gptfdisk-1.0.10
     SOURCES=$(ls *.cc | grep -vE '^(gdisk|cgdisk|fixparts|diskio-windows|gptcurses)\.cc$')
     g++ -o "$BIN_DIR/sgdisk" $SOURCES -I"$POPT_INC" -I"$POPT_INC/src" -I"$LOCAL_UUID_DIR/libuuid/src" \
@@ -96,17 +109,14 @@ if [[ "$CLEAN_START" =~ ^[Yy]$ ]]; then
     cd ..
 
     echo "📦 Building partprobe..."
-    wget -qN https://ftp.gnu.org/gnu/parted/parted-3.6.tar.xz
+    wget -qN "$URL_PARTED"
     tar -xf parted-3.6.tar.xz && cd parted-3.6
     sed -i 's/do_version ()/do_version (PedDevice** dev, PedDisk** diskp)/g' parted/parted.c
     ./configure --enable-static --disable-shared --without-readline --disable-device-mapper --disable-nls \
-                LDFLAGS="-static -no-pie -L$LOCAL_UUID_DIR/.libs" \
-                CPPFLAGS="-I$LOCAL_UUID_DIR/libuuid/src" \
-                CFLAGS="-O2 -static -fno-pie" \
-                UUID_LIBS="-luuid" \
+                UUID_LIBS="-L$LOCAL_UUID_DIR/.libs -luuid" \
                 UUID_CFLAGS="-I$LOCAL_UUID_DIR/libuuid/src"
     make -j$(nproc)
-    find parted -name partprobe -type f -exec cp {} "$BIN_DIR/" \;
+    find parted -name partprobe -type f -executable -exec cp {} "$BIN_DIR/" \;
     cd ..
 
     cd "$ROOT_DIR"
@@ -122,13 +132,13 @@ fi
 
 echo "🦀 Compiling Rust source..."
 touch src/main.rs
-env -u LDFLAGS -u CFLAGS -u CXXFLAGS cargo build --release
+cargo build --release
 
 TARGET_BINARY=$(find target/release -maxdepth 1 -type f -executable ! -name "*.so" ! -name "*.dylib" | head -n 1)
 cp "$TARGET_BINARY" "$BIN_DIR/windusb-gui"
 strip "$BIN_DIR/windusb-gui"
 
-if [[ "$CLEAN_START" =~ ^[Yy]$ ]]; then
+if [ "$CLEAN_START" = true ]; then
     echo "📚 Gathering libraries recursively for maximum portability..."
     EXCLUDE_LIST="libc.so|libpthread.so|libdl.so|libm.so|librt.so|libgcc_s.so|libstdc++.so|libresolv.so|libcrypt.so|libutil.so|libnsl.so|libGL|libnvidia|libdrm|libX11|libxcb|libasound|libpulse|ld-linux"
     TEMP_LIBS="all_libs.txt"
@@ -138,9 +148,13 @@ if [[ "$CLEAN_START" =~ ^[Yy]$ ]]; then
         ldd "$1" 2>/dev/null | grep "=> /" | awk '{print $3}'; 
     }
 
-    get_deps "$BIN_DIR/windusb-gui" >> "$TEMP_LIBS"
-
     echo -n "🔍 Analyzing dependencies: "
+    for f in "$BIN_DIR"/*; do
+        if file "$f" | grep -q "ELF" && ldd "$f" 2>&1 | grep -qv "not a dynamic executable"; then
+            get_deps "$f" >> "$TEMP_LIBS"
+        fi
+    done
+
     while read -r lib; do
         get_deps "$lib" >> "$TEMP_LIBS"
         count=$(wc -l < "$TEMP_LIBS")
@@ -156,6 +170,19 @@ if [[ "$CLEAN_START" =~ ^[Yy]$ ]]; then
     done
     rm "$TEMP_LIBS"
 fi
+
+echo "📊 Binary Status Check:"
+for bin in "$BIN_DIR"/*; do
+    [ -e "$bin" ] || continue
+    if [[ "$(basename "$bin")" == "windusb-gui" ]]; then continue; fi
+    if file "$bin" | grep -q "ELF"; then
+        if ldd "$bin" 2>&1 | grep -q "not a dynamic executable"; then
+            echo "  $(basename "$bin") fully static"
+        else
+            echo "  $(basename "$bin") not fully static"
+        fi
+    fi
+done
 
 echo "🚀 Packaging AppImage..."
 [ -f "$APP_DIR/AppRun" ] && chmod +x "$APP_DIR/AppRun"
