@@ -19,6 +19,16 @@ enum ProgressMsg {
     Error(String),
 }
 
+fn get_local_bin(bin_name: &str) -> String {
+    if let Ok(appdir) = std::env::var("APPDIR") {
+        let local_path = format!("{}/bin-local/{}", appdir, bin_name);
+        if std::path::Path::new(&local_path).exists() {
+            return local_path;
+        }
+    }
+    bin_name.to_string()
+}
+
 fn cleanup_processes() {
     let pgid = unsafe { libc::getpgrp() };
     thread::spawn(move || {
@@ -52,11 +62,7 @@ fn main() {
 }
 
 fn is_valid_windows_iso(path: &Path) -> bool {
-    let z_bin = if let Ok(appdir) = env::var("APPDIR") {
-        format!("{}/bin-local/7z", appdir)
-    } else {
-        "7z".to_string()
-    };
+    let z_bin = get_local_bin("7z");
     let output = Command::new(z_bin)
     .args(["l", &path.to_string_lossy()])
     .output();
@@ -94,11 +100,7 @@ fn run_flasher(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
     let iso_mt = format!("/tmp/windusb_iso_{}", unsafe { libc::rand() });
     let _ = Command::new("mkdir").args(["-p", &usb_mt, &iso_mt]).status();
 
-    let z_bin = if let Ok(appdir) = std::env::var("APPDIR") {
-        format!("{}/bin-local/7z", appdir)
-    } else {
-        "7z".to_string()
-    };
+    let z_bin = get_local_bin("7z");
 
     let list_output = Command::new(&z_bin).args(["l", &iso.to_string_lossy()]).output().ok();
     let mut install_file = String::new();
@@ -127,15 +129,15 @@ fn run_flasher(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
         return;
     }
 
-    let _ = Command::new("blockdev").args(["--flushbufs", &drive]).status();
-    let _ = Command::new("wipefs").args(["-af", &drive]).status();
-    let _ = Command::new("sgdisk").args(["-Z", &drive]).status();
-    let _ = Command::new("sgdisk").args(["-n=1:0:0", "-t=1:0700", &drive]).status();
-    let _ = Command::new("partprobe").arg(&drive).status();
+    let _ = Command::new(get_local_bin("blockdev")).args(["--flushbufs", &drive]).status();
+    let _ = Command::new(get_local_bin("wipefs")).args(["-af", &drive]).status();
+    let _ = Command::new(get_local_bin("sgdisk")).args(["-Z", &drive]).status();
+    let _ = Command::new(get_local_bin("sgdisk")).args(["-n=1:0:0", "-t=1:0700", &drive]).status();
+    let _ = Command::new(get_local_bin("partprobe")).arg(&drive).status();
     thread::sleep(std::time::Duration::from_secs(2));
 
     let part = if drive.contains("nvme") { format!("{}p1", drive) } else { format!("{}1", drive) };
-    if Command::new("mkfs.fat").args(["-F32", "-I", &part]).status().is_err() {
+    if Command::new(get_local_bin("mkfs.fat")).args(["-F32", "-I", &part]).status().is_err() {
         let _ = tx.send(ProgressMsg::Error("Formatting failed. Drive may have been removed.".into()));
         return;
     }
@@ -216,7 +218,7 @@ fn run_flasher(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
     }
 
     let dst_path = format!("{}/sources/install.{}", usb_mt, extension);
-    let status_wim = Command::new("wimlib-imagex")
+    let status_wim = Command::new(get_local_bin("wimlib-imagex"))
     .args(["split", &install_full_path, &dst_path, "3400"])
     .status();
 
@@ -573,7 +575,8 @@ fn build_progress_page(status: gtk4::Label, bar: gtk4::ProgressBar, percent: gtk
 
 fn refresh_drives(list: &gtk4::ListBox) {
     while let Some(child) = list.first_child() { list.remove(&child); }
-    if let Ok(out) = Command::new("lsblk").args(["-pno", "NAME,SIZE,MODEL,TRAN"]).output() {
+    let lsblk_bin = get_local_bin("lsblk");
+    if let Ok(out) = Command::new(lsblk_bin).args(["-pno", "NAME,SIZE,MODEL,TRAN"]).output() {
         let stdout = String::from_utf8_lossy(&out.stdout);
         for line in stdout.lines().filter(|l| l.contains("usb")) {
             let parts: Vec<&str> = line.split_whitespace().collect();

@@ -77,7 +77,7 @@ if [ "$CLEAN_START" = true ]; then
     wget -qN "$URL_DOSFSTOOLS"
     tar -xf dosfstools-4.2.tar.gz && cd dosfstools-4.2
     ./configure --enable-compat-symlinks
-    make -j$(nproc)
+    make -j$(nproc) LDFLAGS="-static"
     cp src/mkfs.fat "$BIN_DIR/" && cd ..
 
     echo "📦 Building util-linux..."
@@ -85,11 +85,14 @@ if [ "$CLEAN_START" = true ]; then
     tar -xf util-linux-2.41.3.tar.gz && cd util-linux-2.41.3
     ./configure --disable-all-programs --enable-wipefs --enable-lsblk --enable-blockdev \
                 --enable-libuuid --enable-libblkid --enable-libsmartcols --enable-libmount \
-                --disable-bash-completion --disable-nls --without-python --without-systemd --without-udev
+                --disable-bash-completion --disable-nls --without-python --without-systemd --without-udev \
+                LDFLAGS="-static"
     make -j$(nproc)
-    find misc-utils -name wipefs -type f -executable -exec cp {} "$BIN_DIR/" \;
-    find misc-utils -name lsblk -type f -executable -exec cp {} "$BIN_DIR/" \;
-    find sys-utils -name blockdev -type f -executable -exec cp {} "$BIN_DIR/" \;
+    
+    find . -type f -name wipefs -not -path "*/scripts/*" -exec file {} + | grep "ELF" | cut -d: -f1 | head -n 1 | xargs -I {} cp {} "$BIN_DIR/wipefs"
+    find . -type f -name lsblk -not -path "*/scripts/*" -exec file {} + | grep "ELF" | cut -d: -f1 | head -n 1 | xargs -I {} cp {} "$BIN_DIR/lsblk"
+    find . -type f -name blockdev -not -path "*/scripts/*" -exec file {} + | grep "ELF" | cut -d: -f1 | head -n 1 | xargs -I {} cp {} "$BIN_DIR/blockdev"
+    
     LOCAL_UUID_DIR=$(pwd)
     cd ..
 
@@ -112,11 +115,16 @@ if [ "$CLEAN_START" = true ]; then
     wget -qN "$URL_PARTED"
     tar -xf parted-3.6.tar.xz && cd parted-3.6
     sed -i 's/do_version ()/do_version (PedDevice** dev, PedDisk** diskp)/g' parted/parted.c
+    
+    # Updated flags to point Parted to the local libuuid we just built
     ./configure --enable-static --disable-shared --without-readline --disable-device-mapper --disable-nls \
+                LDFLAGS="-static -L$LOCAL_UUID_DIR/.libs" \
+                CPPFLAGS="-I$LOCAL_UUID_DIR/libuuid/src" \
                 UUID_LIBS="-L$LOCAL_UUID_DIR/.libs -luuid" \
                 UUID_CFLAGS="-I$LOCAL_UUID_DIR/libuuid/src"
+    
     make -j$(nproc)
-    find parted -name partprobe -type f -executable -exec cp {} "$BIN_DIR/" \;
+    find . -type f -name partprobe -not -path "*/scripts/*" -exec file {} + | grep "ELF" | cut -d: -f1 | head -n 1 | xargs -I {} cp {} "$BIN_DIR/partprobe"
     cd ..
 
     cd "$ROOT_DIR"
@@ -127,7 +135,7 @@ if [ "$CLEAN_START" = true ]; then
         fi
     done
 else
-    echo "⏭️  Fast Build: Skipping tools and library scan..."
+    echo "⏭️ Fast Build: Skipping tools and library scan..."
 fi
 
 echo "🦀 Compiling Rust source..."
