@@ -5,6 +5,7 @@ Cargo.lock
 # AppImage Tooling & Output
 appimagetool*
 *.AppImage
+*.zsync
 artifacts/
 build/
 

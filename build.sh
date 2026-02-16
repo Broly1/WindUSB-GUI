@@ -195,9 +195,11 @@ done
 echo "🚀 Packaging AppImage..."
 [ -f "$APP_DIR/AppRun" ] && chmod +x "$APP_DIR/AppRun"
 FINAL_FILENAME="WindUSB-x86_64.AppImage"
-$APPIMAGE_TOOL "$APP_DIR" "$FINAL_FILENAME"
+UPD_STR="gh-releases-zsync|Broly1|WindUSB-GUI|latest|*.AppImage.zsync"
+$APPIMAGE_TOOL -u "$UPD_STR" "$APP_DIR" "$FINAL_FILENAME"
 APP_SIZE=$(du -h "$FINAL_FILENAME" | cut -f1)
-
+echo "🔍 Verifying update information..."
+strings "$FINAL_FILENAME" | grep "gh-releases-zsync"
 echo "-------------------------------------------------------"
 echo "✅ Build Complete!"
 echo "📦 File: $FINAL_FILENAME"
