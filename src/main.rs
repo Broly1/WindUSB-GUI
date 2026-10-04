@@ -111,6 +111,86 @@ fn device_exists(drive: &str) -> bool {
     Path::new(drive).exists()
 }
 
+// ── free space / work directory selection ──
+
+fn free_bytes(path: &str) -> Option<u64> {
+    let c = CString::new(path).ok()?;
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+        return None;
+    }
+    Some(st.f_bavail as u64 * st.f_frsize as u64)
+}
+
+/// True for RAM-backed filesystems (tmpfs/ramfs), which must not hold the install image.
+fn is_ram_backed(path: &str) -> bool {
+    let c = match CString::new(path) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let mut st: libc::statfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statfs(c.as_ptr(), &mut st) } != 0 {
+        return false;
+    }
+    const TMPFS_MAGIC: u64 = 0x0102_1994;
+    const RAMFS_MAGIC: u64 = 0x8584_58f6;
+    let t = (st.f_type as u64) & 0xFFFF_FFFF;
+    t == TMPFS_MAGIC || t == RAMFS_MAGIC
+}
+
+/// Parse the exact size of `install_file` from `7z l -slt` output.
+fn image_size_from_listing(listing: &str, install_file: &str) -> Option<u64> {
+    let mut in_target = false;
+    for line in listing.lines() {
+        if let Some(p) = line.strip_prefix("Path = ") {
+            in_target = p.replace('\\', "/").to_lowercase() == install_file;
+        } else if in_target {
+            if let Some(s) = line.strip_prefix("Size = ") {
+                return s.trim().parse().ok();
+            }
+        }
+    }
+    None
+}
+
+/// First disk-backed candidate with enough free space for the extracted image.
+/// /var/tmp comes before /tmp because /tmp is RAM-backed (tmpfs) on Fedora and
+/// others; RAM-backed directories are skipped automatically.
+fn pick_work_dir(needed: u64, iso_parent: Option<&str>) -> Result<String, String> {
+    let mut candidates: Vec<String> = vec!["/var/tmp".into(), "/tmp".into()];
+    if let Some(p) = iso_parent {
+        candidates.push(p.to_string());
+    }
+    let mut report = Vec::new();
+    for dir in &candidates {
+        if is_ram_backed(dir) {
+            report.push(format!("{}: RAM-backed, skipped", dir));
+            continue;
+        }
+        match free_bytes(dir) {
+            Some(free) if free >= needed => {
+                log(
+                    "helper",
+                    &format!(
+                        "work dir {} ({} MB free, need {} MB)",
+                        dir,
+                        free / 1024 / 1024,
+                        needed / 1024 / 1024
+                    ),
+                );
+                return Ok(dir.clone());
+            }
+            Some(free) => report.push(format!("{}: {} MB free", dir, free / 1024 / 1024)),
+            None => report.push(format!("{}: unavailable", dir)),
+        }
+    }
+    Err(format!(
+        "Not enough temporary disk space: need {} MB ({}). Free up space and try again.",
+        needed / 1024 / 1024,
+        report.join(", ")
+    ))
+}
+
 // ── mount / umount via syscalls (no dependency on host `mount` + libmount) ──
 
 fn sys_mount_vfat(dev: &str, target: &str) -> Result<(), String> {
@@ -383,16 +463,8 @@ fn flash(drive_arg: &str, iso_arg: &str) -> Result<(), String> {
     let iso_s = iso.to_string_lossy().to_string();
     let z_bin = get_local_bin("7z");
 
-    let pid = process::id();
-    let usb_mt = format!("/tmp/windusb_usb_{}", pid);
-    let iso_mt = format!("/tmp/windusb_iso_{}", pid);
-    fs::create_dir(&usb_mt).map_err(|e| format!("Cannot create {}: {}", usb_mt, e))?;
-    fs::create_dir(&iso_mt).map_err(|e| format!("Cannot create {}: {}", iso_mt, e))?;
-    log("helper", &format!("temp dirs: {} {}", usb_mt, iso_mt));
-    *DIRS.lock().unwrap() = Some((usb_mt.clone(), iso_mt.clone()));
-
-    // Find install image inside the ISO.
-    let listing = capture(Command::new(&z_bin).args(["l", &iso_s]))
+    // Find install image inside the ISO (-slt gives exact sizes).
+    let listing = capture(Command::new(&z_bin).args(["l", "-slt", &iso_s]))
         .map_err(|e| format!("7z failed: {}", e))?;
     let stdout = listing.to_lowercase();
     let (install_file, is_wim) = if stdout.contains("sources/install.wim") {
@@ -407,6 +479,26 @@ fn flash(drive_arg: &str, iso_arg: &str) -> Result<(), String> {
         &format!("found {} (wim={})", install_file, is_wim),
     );
     let install_name = install_file.rsplit('/').next().unwrap().to_string();
+
+    // Exact size if we can parse it, otherwise the ISO size (always >= the image).
+    let image_size = image_size_from_listing(&listing, install_file)
+        .or_else(|| fs::metadata(&iso).ok().map(|m| m.len()))
+        .unwrap_or(0);
+    log(
+        "helper",
+        &format!("install image size (listing): {} bytes", image_size),
+    );
+    let needed = image_size + image_size / 50; // ~2% filesystem slack
+    let iso_parent = iso.parent().map(|p| p.to_string_lossy().to_string());
+    let work_base = pick_work_dir(needed, iso_parent.as_deref())?;
+
+    let pid = process::id();
+    let usb_mt = format!("/tmp/windusb_usb_{}", pid); // tiny mount point, RAM-backed is fine
+    let iso_mt = format!("{}/windusb_iso_{}", work_base, pid); // big temp file, disk-backed
+    fs::create_dir(&usb_mt).map_err(|e| format!("Cannot create {}: {}", usb_mt, e))?;
+    fs::create_dir(&iso_mt).map_err(|e| format!("Cannot create {}: {}", iso_mt, e))?;
+    log("helper", &format!("temp dirs: {} {}", usb_mt, iso_mt));
+    *DIRS.lock().unwrap() = Some((usb_mt.clone(), iso_mt.clone()));
 
     // ── format ──
     emit_progress(&format!("Formatting drive {}...", drive), 0.02);
@@ -441,7 +533,7 @@ fn flash(drive_arg: &str, iso_arg: &str) -> Result<(), String> {
         return Err("Partition did not appear after partitioning.".into());
     }
 
-    if !run(Command::new(get_local_bin("mkfs.fat")).args(["-F32", "-I", "-n", "WINUSB", &part]))? {
+    if !run(Command::new(get_local_bin("mkfs.fat")).args(["-F32", "-I", "-n", "WINDUSB", &part]))? {
         return Err("Formatting failed. Drive may have been removed.".into());
     }
     if let Err(e) = sys_mount_vfat(&part, &usb_mt) {
@@ -464,7 +556,7 @@ fn flash(drive_arg: &str, iso_arg: &str) -> Result<(), String> {
     let install_full_path = format!("{}/{}", iso_mt, install_name);
     let wim_size = fs::metadata(&install_full_path)
         .map(|m| m.len() as f64)
-        .unwrap_or(4_000_000_000.0);
+        .unwrap_or(image_size as f64);
     log(
         "helper",
         &format!("install image size: {:.0} bytes", wim_size),
@@ -754,7 +846,7 @@ fn spawn_helper(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
 }
 
 fn build_ui(app: &libadwaita::Application) {
-    // ── icon setup (new) ──
+    // Icon setup: let GTK find the bundled hicolor icon inside the AppImage.
     if let Some(display) = gtk4::gdk::Display::default() {
         if let Ok(appdir) = env::var("APPDIR") {
             gtk4::IconTheme::for_display(&display)
@@ -762,6 +854,7 @@ fn build_ui(app: &libadwaita::Application) {
         }
     }
     gtk4::Window::set_default_icon_name("io.github.windusb");
+
     let provider = gtk4::CssProvider::new();
     provider.load_from_data(b"
     button.pill-btn { border-radius: 99px; padding-left: 24px; padding-right: 24px; min-height: 38px; }
