@@ -76,8 +76,27 @@ if [ "$CLEAN_START" = true ]; then
     echo "📦 Building dosfstools..."
     wget -qN "$URL_DOSFSTOOLS"
     tar -xf dosfstools-4.2.tar.gz && cd dosfstools-4.2
-    ./configure --enable-compat-symlinks
+    if ./configure --help | grep -q -- '--without-iconv'; then
+        # No iconv means no dlopen of host gconv modules, which segfaults
+        # in a static glibc binary on distros with a different glibc.
+        ./configure --enable-compat-symlinks --without-iconv
+    else
+        echo "  ❌ this dosfstools version has no --without-iconv option"
+        ./configure --help | grep -i iconv || true
+        exit 1
+    fi
     make -j$(nproc) LDFLAGS="-static"
+
+    # Smoke test: format a scratch image with the freshly built binary
+    truncate -s 64M "$BUILD_ROOT/mkfs-test.img"
+    if ./src/mkfs.fat -F32 -n TEST "$BUILD_ROOT/mkfs-test.img" >/dev/null 2>&1; then
+        echo "  ✅ mkfs.fat smoke test passed"
+    else
+        echo "  ❌ mkfs.fat smoke test failed"
+        exit 1
+    fi
+    rm -f "$BUILD_ROOT/mkfs-test.img"
+
     cp src/mkfs.fat "$BIN_DIR/" && cd ..
 
     echo "📦 Building util-linux (static, no libmount/libblkid shared libs)..."
@@ -208,6 +227,33 @@ if ls "$LIB_DIR" | grep -E 'libmount|libblkid'; then
 else
     echo "  ✅ none bundled (system versions will be used)"
 fi
+
+echo "🎨 Checking icon files..."
+ICON_NAME="io.github.windusb"
+DESKTOP_FILE="$APP_DIR/$ICON_NAME.desktop"
+ICON_FILE="$APP_DIR/$ICON_NAME.png"
+
+if [ ! -f "$ICON_FILE" ]; then
+    echo "  ❌ Missing $ICON_FILE (check the filename for typos)"
+    ls "$APP_DIR"/*.png 2>/dev/null || true
+    exit 1
+fi
+if [ ! -f "$DESKTOP_FILE" ]; then
+    echo "  ❌ Missing $DESKTOP_FILE"
+    exit 1
+fi
+if ! grep -qx "Icon=$ICON_NAME" "$DESKTOP_FILE"; then
+    echo "  ❌ $DESKTOP_FILE must contain: Icon=$ICON_NAME"
+    exit 1
+fi
+
+# .DirIcon and a hicolor copy so GTK can find the icon at runtime
+ln -sf "$ICON_NAME.png" "$APP_DIR/.DirIcon"
+mkdir -p "$APP_DIR/usr/share/icons/hicolor/256x256/apps"
+cp -f "$ICON_FILE" "$APP_DIR/usr/share/icons/hicolor/256x256/apps/$ICON_NAME.png"
+
+file "$ICON_FILE"   # ideally prints: PNG image data, 256 x 256
+echo "  ✅ Icon files OK"
 
 echo "🚀 Packaging AppImage..."
 [ -f "$APP_DIR/AppRun" ] && chmod +x "$APP_DIR/AppRun"
