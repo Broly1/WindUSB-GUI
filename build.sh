@@ -168,7 +168,7 @@ strip "$BIN_DIR/windusb-gui"
 
 if [ "$CLEAN_START" = true ]; then
     echo "📚 Gathering libraries recursively for maximum portability..."
-    EXCLUDE_LIST="libc.so|libpthread.so|libdl.so|libm.so|librt.so|libgcc_s.so|libstdc++.so|libresolv.so|libcrypt.so|libutil.so|libnsl.so|libGL|libnvidia|libdrm|libX11|libxcb|libasound|libpulse|ld-linux"
+    EXCLUDE_LIST="libc.so|libpthread.so|libdl.so|libm.so|librt.so|libgcc_s.so|libstdc++.so|libresolv.so|libcrypt.so|libutil.so|libnsl.so|libGL|libnvidia|libdrm|libX11|libxcb|libasound|libpulse|ld-linux|libglib-2|libgobject-2|libgio-2|libgmodule-2|libgthread-2|libwayland|libEGL|libgbm|libpcre2-8"
     # Always use the host's copy of these (they must match each other and the host system)
     SYSTEM_LIBS="libmount\.so|libblkid\.so"
     TEMP_LIBS="all_libs.txt"
