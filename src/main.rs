@@ -1,83 +1,98 @@
 use gtk4::glib;
+use gtk4::prelude::*;
 use libadwaita::prelude::*;
 use std::env;
-use std::os::unix::process::CommandExt;
+use std::ffi::CString;
+use std::fs;
+use std::io::{self, BufRead, BufReader, Read, Write};
+use std::os::unix::fs::FileTypeExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{self, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering};
 use std::sync::mpsc;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
+use std::time::{Duration, Instant};
 
-struct AppState {
-    drive: Option<String>,
-    iso: Option<PathBuf>,
+// ───────────────────────── shared ─────────────────────────
+
+static START: OnceLock<Instant> = OnceLock::new();
+
+/// Live trace to stderr: [seconds] [tag] message
+fn log(tag: &str, msg: &str) {
+    let t = START.get_or_init(Instant::now).elapsed().as_secs_f64();
+    eprintln!("[{:8.3}] [{:<8}] {}", t, tag, msg);
 }
 
-enum ProgressMsg {
-    Update(String, f64),
-    Finished,
-    Error(String),
+/// Read a pipe and log every line as it arrives. Splits on \n and \r so
+/// progress-style output (mkfs, 7z) shows up live too.
+fn stream<R: Read + Send + 'static>(r: R, tag: &'static str) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let mut buf: Vec<u8> = Vec::new();
+        for b in BufReader::new(r).bytes() {
+            match b {
+                Ok(b'\n') | Ok(b'\r') => {
+                    if !buf.is_empty() {
+                        log(tag, &String::from_utf8_lossy(&buf));
+                        buf.clear();
+                    }
+                }
+                Ok(c) => buf.push(c),
+                Err(_) => break,
+            }
+        }
+        if !buf.is_empty() {
+            log(tag, &String::from_utf8_lossy(&buf));
+        }
+    })
 }
 
+/// For commands whose output we need to read (lsblk, 7z l). Also logs it.
+fn capture(cmd: &mut Command) -> Result<String, String> {
+    log("RUN", &format!("{:?}", cmd));
+    let out = cmd
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("Failed to start {:?}: {}", cmd.get_program(), e))?;
+    let s = String::from_utf8_lossy(&out.stdout).to_string();
+    for l in s.lines().take(20) {
+        log("out", l);
+    }
+    if s.lines().count() > 20 {
+        log("out", "... (truncated)");
+    }
+    for l in String::from_utf8_lossy(&out.stderr).lines() {
+        log("err", l);
+    }
+    log("exit", &format!("{}", out.status));
+    Ok(s)
+}
+
+/// Path of a tool bundled in the AppImage (bin-local), or the bare name
+/// to be resolved from the host PATH. Bundled tools NEED the bundled libs.
 fn get_local_bin(bin_name: &str) -> String {
-    if let Ok(appdir) = std::env::var("APPDIR") {
+    if let Ok(appdir) = env::var("APPDIR") {
         let local_path = format!("{}/bin-local/{}", appdir, bin_name);
-        if std::path::Path::new(&local_path).exists() {
+        if Path::new(&local_path).exists() {
             return local_path;
         }
     }
     bin_name.to_string()
 }
 
-fn cleanup_processes() {
-    let pgid = unsafe { libc::getpgrp() };
-    thread::spawn(move || {
-        let _ = Command::new("pkill").args(["-9", "wimlib-imagex"]).status();
-        let _ = Command::new("pkill").args(["-9", "7z"]).status();
-        let _ = Command::new("sh")
-            .args(["-c", "umount -l /tmp/windusb_* 2>/dev/null"])
-            .status();
-        unsafe {
-            libc::kill(-pgid, libc::SIGKILL);
-        }
-    });
-    std::process::exit(0);
-}
-
-fn main() {
-    unsafe {
-        libc::setpgid(0, 0);
-    }
-    env::set_var("GSETTINGS_BACKEND", "memory");
-    env::set_var("GTK_USE_PORTAL", "1");
-    env::set_var("GIO_USE_VFS", "local");
-    ctrlc::set_handler(move || {
-        cleanup_processes();
-    })
-    .expect("Error setting Ctrl-C handler");
-    let app = libadwaita::Application::builder()
-        .application_id("io.github.windusb")
-        .build();
-    app.connect_activate(build_ui);
-    app.run();
-}
-
-fn is_valid_windows_iso(path: &Path) -> bool {
-    let z_bin = get_local_bin("7z");
-    let output = Command::new(z_bin)
-        .args(["l", &path.to_string_lossy()])
-        .output();
-    if let Ok(out) = output {
-        let stdout = String::from_utf8_lossy(&out.stdout).to_lowercase();
-        stdout.contains("sources/install.wim") || stdout.contains("sources/install.esd")
-    } else {
-        false
-    }
+/// Command for a HOST binary (sync, cp, du, ...). Strips the AppImage's
+/// library overrides so it links against the system libs, not the
+/// Ubuntu-built ones in lib-local.
+fn host_cmd(name: &str) -> Command {
+    let mut c = Command::new(name);
+    c.env_remove("LD_LIBRARY_PATH");
+    c.env_remove("LD_PRELOAD");
+    c
 }
 
 fn get_system_dirty_bytes() -> f64 {
     let mut total_kb = 0.0;
-    if let Ok(content) = std::fs::read_to_string("/proc/meminfo") {
+    if let Ok(content) = fs::read_to_string("/proc/meminfo") {
         for line in content.lines() {
             if line.starts_with("Dirty:") || line.starts_with("Writeback:") {
                 let parts: Vec<&str> = line.split_whitespace().collect();
@@ -96,322 +111,684 @@ fn device_exists(drive: &str) -> bool {
     Path::new(drive).exists()
 }
 
-fn run_flasher(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
-    let usb_mt = format!("/tmp/windusb_usb_{}", unsafe { libc::rand() });
-    let iso_mt = format!("/tmp/windusb_iso_{}", unsafe { libc::rand() });
-    let _ = Command::new("mkdir")
-        .args(["-p", &usb_mt, &iso_mt])
-        .status();
+// ── mount / umount via syscalls (no dependency on host `mount` + libmount) ──
 
-    let z_bin = get_local_bin("7z");
+fn sys_mount_vfat(dev: &str, target: &str) -> Result<(), String> {
+    let src = CString::new(dev).map_err(|e| e.to_string())?;
+    let tgt = CString::new(target).map_err(|e| e.to_string())?;
+    let fstype = CString::new("vfat").unwrap();
+    let data = CString::new("iocharset=utf8").unwrap();
 
-    let list_output = Command::new(&z_bin)
-        .args(["l", &iso.to_string_lossy()])
-        .output()
-        .ok();
-    let mut install_file = String::new();
-    let mut extension = String::new();
-    if let Some(out) = list_output {
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        if stdout.contains("sources/install.wim") {
-            install_file = "sources/install.wim".to_string();
-            extension = "swm".to_string();
-        } else if stdout.contains("sources/install.esd") {
-            install_file = "sources/install.esd".to_string();
-            extension = "esd".to_string();
+    // First try with utf8 charset, then fall back to kernel defaults.
+    let rc = unsafe {
+        libc::mount(
+            src.as_ptr(),
+            tgt.as_ptr(),
+            fstype.as_ptr(),
+            libc::MS_NOATIME,
+            data.as_ptr() as *const libc::c_void,
+        )
+    };
+    if rc == 0 {
+        log("helper", &format!("mounted {} on {}", dev, target));
+        return Ok(());
+    }
+    let first_err = io::Error::last_os_error();
+    log(
+        "helper",
+        &format!(
+            "mount with iocharset=utf8 failed ({}), retrying without",
+            first_err
+        ),
+    );
+    let rc = unsafe {
+        libc::mount(
+            src.as_ptr(),
+            tgt.as_ptr(),
+            fstype.as_ptr(),
+            libc::MS_NOATIME,
+            std::ptr::null(),
+        )
+    };
+    if rc != 0 {
+        return Err(format!("mount failed: {}", io::Error::last_os_error()));
+    }
+    log("helper", &format!("mounted {} on {}", dev, target));
+    Ok(())
+}
+
+fn sys_umount(target: &str) -> bool {
+    match CString::new(target) {
+        Ok(t) => unsafe { libc::umount2(t.as_ptr(), 0) == 0 },
+        Err(_) => false,
+    }
+}
+
+fn sys_umount_lazy(target: &str) -> bool {
+    match CString::new(target) {
+        Ok(t) => unsafe { libc::umount2(t.as_ptr(), libc::MNT_DETACH) == 0 },
+        Err(_) => false,
+    }
+}
+
+fn main() {
+    START.get_or_init(Instant::now);
+    let args: Vec<String> = env::args().collect();
+    if args.len() >= 2 && args[1] == "--flash" {
+        if args.len() != 4 {
+            eprintln!("usage: {} --flash <device> <iso>", args[0]);
+            process::exit(2);
+        }
+        helper_main(&args[2], &args[3]);
+    }
+    gui_main();
+}
+
+// ───────────────────── privileged helper ─────────────────────
+// Runs as root via pkexec. Talks to the GUI over stdout (progress)
+// and stdin (EOF == cancel). Diagnostics go to stderr.
+//
+// Protocol lines (stdout):
+//   PROGRESS <fraction> <text>   determinate progress
+//   PULSE <text>                 indeterminate (bar bounces)
+//   DONE
+//   ERROR <text>
+
+static CANCELLED: AtomicBool = AtomicBool::new(false);
+static CHILD_PID: AtomicI32 = AtomicI32::new(0);
+static DIRS: Mutex<Option<(String, String)>> = Mutex::new(None);
+
+fn emit(line: &str) {
+    if line.starts_with("ERROR") || line == "DONE" {
+        log("result", line);
+    }
+    let out = io::stdout();
+    let mut l = out.lock();
+    let _ = writeln!(l, "{}", line.replace('\n', " "));
+    let _ = l.flush();
+}
+
+fn emit_progress(text: &str, fraction: f64) {
+    log("progress", &format!("{:.0}% {}", fraction * 100.0, text));
+    emit(&format!(
+        "PROGRESS {:.4} {}",
+        fraction.clamp(0.0, 1.0),
+        text
+    ));
+}
+
+/// Run a command, streaming its stdout/stderr live to our stderr trace.
+/// Tracks the PID so a cancel can kill it. Returns Ok(success).
+fn run(cmd: &mut Command) -> Result<bool, String> {
+    if CANCELLED.load(Ordering::SeqCst) {
+        return Err("Cancelled".into());
+    }
+    log("RUN", &format!("{:?}", cmd));
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Failed to start {:?}: {}", cmd.get_program(), e))?;
+    CHILD_PID.store(child.id() as i32, Ordering::SeqCst);
+
+    let h1 = stream(child.stdout.take().unwrap(), "out");
+    let h2 = stream(child.stderr.take().unwrap(), "err");
+
+    let status = child.wait();
+    let _ = h1.join();
+    let _ = h2.join();
+    CHILD_PID.store(0, Ordering::SeqCst);
+    log("exit", &format!("{:?}", status));
+
+    if CANCELLED.load(Ordering::SeqCst) {
+        return Err("Cancelled".into());
+    }
+    status
+        .map(|s| s.success())
+        .map_err(|e| format!("Wait failed: {}", e))
+}
+
+fn cleanup_dirs() {
+    let dirs = DIRS.lock().unwrap().clone();
+    if let Some((usb, iso)) = dirs {
+        log(
+            "cleanup",
+            &format!("umount -l {} ; rm {} {}", usb, usb, iso),
+        );
+        sys_umount_lazy(&usb);
+        let _ = fs::remove_dir(&usb); // non-recursive on purpose
+        let _ = fs::remove_dir_all(&iso);
+    }
+}
+
+fn helper_main(drive: &str, iso: &str) -> ! {
+    if unsafe { libc::getuid() } != 0 {
+        emit("ERROR Helper must run as root");
+        process::exit(1);
+    }
+    log("helper", &format!("started: drive={} iso={}", drive, iso));
+
+    // Cancel watcher: GUI closing our stdin means "stop".
+    thread::spawn(|| {
+        let mut buf = [0u8; 64];
+        let mut stdin = io::stdin();
+        loop {
+            match stdin.read(&mut buf) {
+                Ok(0) | Err(_) => break,
+                Ok(_) => {}
+            }
+        }
+        log("helper", "stdin closed -> cancelling");
+        CANCELLED.store(true, Ordering::SeqCst);
+        let pid = CHILD_PID.load(Ordering::SeqCst);
+        if pid > 0 {
+            log("helper", &format!("killing child pid {}", pid));
+            unsafe {
+                libc::kill(pid, libc::SIGKILL);
+            }
+        }
+        // Failsafe in case the main thread is stuck (e.g. in sync).
+        thread::sleep(Duration::from_secs(5));
+        cleanup_dirs();
+        process::exit(130);
+    });
+
+    let result = flash(drive, iso);
+    cleanup_dirs();
+    match result {
+        Ok(()) => {
+            emit("DONE");
+            process::exit(0);
+        }
+        Err(e) => {
+            emit(&format!("ERROR {}", e));
+            process::exit(1);
         }
     }
+}
 
-    if install_file.is_empty() {
-        let _ = tx.send(ProgressMsg::Error(
-            "Invalid ISO: install.wim/esd not found".into(),
-        ));
-        return;
+fn validate_drive(drive: &str) -> Result<String, String> {
+    let canon = fs::canonicalize(drive).map_err(|e| format!("Device not found: {}", e))?;
+    let canon_s = canon.to_string_lossy().to_string();
+    if !canon_s.starts_with("/dev/") {
+        return Err("Target is not under /dev".into());
     }
+    let meta = fs::metadata(&canon).map_err(|e| format!("Cannot stat device: {}", e))?;
+    if !meta.file_type().is_block_device() {
+        return Err("Target is not a block device".into());
+    }
+    let text = capture(Command::new(get_local_bin("lsblk")).args(["-dnro", "TYPE,TRAN", &canon_s]))
+        .map_err(|e| format!("lsblk failed: {}", e))?;
+    let parts: Vec<&str> = text.split_whitespace().collect();
+    if parts.first() != Some(&"disk") || parts.get(1) != Some(&"usb") {
+        return Err("Refusing to write: target is not a USB disk".into());
+    }
+    Ok(canon_s)
+}
 
-    let _ = tx.send(ProgressMsg::Update(
-        format!("Formatting drive {}...", drive),
-        0.02,
-    ));
-    let _ = Command::new("sh")
-        .args(["-c", &format!("umount -l {}* 2>/dev/null", drive)])
-        .status();
+/// Decode the octal escapes (\040 for space, etc.) used in /proc/mounts.
+fn unescape_mount_path(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'\\'
+            && i + 3 < b.len()
+            && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c))
+        {
+            let v = ((b[i + 1] - b'0') as u32) * 64
+                + ((b[i + 2] - b'0') as u32) * 8
+                + (b[i + 3] - b'0') as u32;
+            out.push(v as u8);
+            i += 4;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).to_string()
+}
 
+/// Unmount every mounted partition of `drive`. umount2() takes the MOUNT
+/// POINT, so we read it from the second field of /proc/mounts.
+fn unmount_device(drive: &str) {
+    if let Ok(mounts) = fs::read_to_string("/proc/mounts") {
+        for line in mounts.lines() {
+            let mut it = line.split_whitespace();
+            let dev = it.next().unwrap_or("");
+            let mountpoint = it.next().unwrap_or("");
+            if let Some(rest) = dev.strip_prefix(drive) {
+                if rest.is_empty() || rest.chars().all(|c| c.is_ascii_digit() || c == 'p') {
+                    let mp = unescape_mount_path(mountpoint);
+                    log("helper", &format!("unmounting {} from {}", dev, mp));
+                    if !sys_umount_lazy(&mp) {
+                        log(
+                            "helper",
+                            &format!("umount {} failed: {}", mp, io::Error::last_os_error()),
+                        );
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn flash(drive_arg: &str, iso_arg: &str) -> Result<(), String> {
+    let drive = validate_drive(drive_arg)?;
+    let iso = fs::canonicalize(iso_arg).map_err(|e| format!("ISO not found: {}", e))?;
+    if !iso.is_file() {
+        return Err("ISO path is not a regular file".into());
+    }
+    let iso_s = iso.to_string_lossy().to_string();
+    let z_bin = get_local_bin("7z");
+
+    let pid = process::id();
+    let usb_mt = format!("/tmp/windusb_usb_{}", pid);
+    let iso_mt = format!("/tmp/windusb_iso_{}", pid);
+    fs::create_dir(&usb_mt).map_err(|e| format!("Cannot create {}: {}", usb_mt, e))?;
+    fs::create_dir(&iso_mt).map_err(|e| format!("Cannot create {}: {}", iso_mt, e))?;
+    log("helper", &format!("temp dirs: {} {}", usb_mt, iso_mt));
+    *DIRS.lock().unwrap() = Some((usb_mt.clone(), iso_mt.clone()));
+
+    // Find install image inside the ISO.
+    let listing = capture(Command::new(&z_bin).args(["l", &iso_s]))
+        .map_err(|e| format!("7z failed: {}", e))?;
+    let stdout = listing.to_lowercase();
+    let (install_file, is_wim) = if stdout.contains("sources/install.wim") {
+        ("sources/install.wim", true)
+    } else if stdout.contains("sources/install.esd") {
+        ("sources/install.esd", false)
+    } else {
+        return Err("Invalid ISO: install.wim/esd not found".into());
+    };
+    log(
+        "helper",
+        &format!("found {} (wim={})", install_file, is_wim),
+    );
+    let install_name = install_file.rsplit('/').next().unwrap().to_string();
+
+    // ── format ──
+    emit_progress(&format!("Formatting drive {}...", drive), 0.02);
+    unmount_device(&drive);
     if !device_exists(&drive) {
-        let _ = tx.send(ProgressMsg::Error(
-            "Drive disconnected before formatting".into(),
-        ));
-        return;
+        return Err("Drive disconnected before formatting".into());
     }
+    let _ = run(Command::new(get_local_bin("blockdev")).args(["--flushbufs", &drive]));
+    let _ = run(Command::new(get_local_bin("wipefs")).args(["-af", &drive]));
+    let _ = run(Command::new(get_local_bin("sgdisk")).args(["-Z", &drive]));
+    if !run(Command::new(get_local_bin("sgdisk")).args(["-n=1:0:0", "-t=1:0700", &drive]))? {
+        return Err("Partitioning failed (sgdisk). Drive may have been removed.".into());
+    }
+    let _ = run(Command::new(get_local_bin("partprobe")).arg(&drive));
 
-    let _ = Command::new(get_local_bin("blockdev"))
-        .args(["--flushbufs", &drive])
-        .status();
-    let _ = Command::new(get_local_bin("wipefs"))
-        .args(["-af", &drive])
-        .status();
-    let _ = Command::new(get_local_bin("sgdisk"))
-        .args(["-Z", &drive])
-        .status();
-    let _ = Command::new(get_local_bin("sgdisk"))
-        .args(["-n=1:0:0", "-t=1:0700", &drive])
-        .status();
-    let _ = Command::new(get_local_bin("partprobe"))
-        .arg(&drive)
-        .status();
-    thread::sleep(std::time::Duration::from_secs(2));
-
-    let part = if drive.contains("nvme") {
+    let part = if drive.chars().last().map_or(false, |c| c.is_ascii_digit()) {
         format!("{}p1", drive)
     } else {
         format!("{}1", drive)
     };
-    if Command::new(get_local_bin("mkfs.fat"))
-        .args(["-F32", "-I", &part])
-        .status()
-        .is_err()
+    log("helper", &format!("waiting for partition {}", part));
+    for _ in 0..20 {
+        if Path::new(&part).exists() {
+            break;
+        }
+        thread::sleep(Duration::from_millis(250));
+    }
+    thread::sleep(Duration::from_secs(1));
+    let part_exists = Path::new(&part).exists();
+    log("helper", &format!("partition exists: {}", part_exists));
+    if !part_exists {
+        return Err("Partition did not appear after partitioning.".into());
+    }
+
+    if !run(Command::new(get_local_bin("mkfs.fat")).args(["-F32", "-I", "-n", "WINUSB", &part]))? {
+        return Err("Formatting failed. Drive may have been removed.".into());
+    }
+    if let Err(e) = sys_mount_vfat(&part, &usb_mt) {
+        return Err(format!("Failed to mount USB drive: {}", e));
+    }
+
+    // ── extract install image to temp ──
+    emit_progress("Extracting install image...", 0.04);
+    let ok = run(Command::new(&z_bin).args([
+        "e",
+        "-bd",
+        &iso_s,
+        &format!("-o{}", iso_mt),
+        install_file,
+        "-y",
+    ]))?;
+    if !ok || !device_exists(&drive) {
+        return Err("Failed to extract install.wim/esd from ISO".into());
+    }
+    let install_full_path = format!("{}/{}", iso_mt, install_name);
+    let wim_size = fs::metadata(&install_full_path)
+        .map(|m| m.len() as f64)
+        .unwrap_or(4_000_000_000.0);
+    log(
+        "helper",
+        &format!("install image size: {:.0} bytes", wim_size),
+    );
+
+    if !is_wim && wim_size >= 4_294_967_295.0 {
+        return Err("install.esd is larger than 4 GB and cannot be stored on FAT32".into());
+    }
+
+    // ── progress monitor ──
+    let active = Arc::new(AtomicBool::new(true));
+    let phase = Arc::new(AtomicU8::new(1));
     {
-        let _ = tx.send(ProgressMsg::Error(
-            "Formatting failed. Drive may have been removed.".into(),
-        ));
-        return;
-    }
-
-    if Command::new("mount")
-        .args([&part, &usb_mt])
-        .status()
-        .is_err()
-    {
-        let _ = tx.send(ProgressMsg::Error("Failed to mount USB drive.".into()));
-        return;
-    }
-
-    // --- FIX: no more loop-mounting the ISO. We already extract everything else
-    // from the ISO with 7z directly, so pull install.wim/esd out the same way.
-    // This avoids the ISO loop mount, which was silently failing due to an
-    // LD_LIBRARY_PATH clash between the AppImage's bundled libmount.so.1 and
-    // the system `mount` binary (visible in logs as "version `MOUNT_2_42' not
-    // found"). That left iso_mt empty, so wimlib-imagex later failed with
-    // "No such file or directory" even though install.wim was genuinely
-    // present inside the ISO.
-    let _ = tx.send(ProgressMsg::Update(
-        "Extracting install image...".to_string(),
-        0.04,
-    ));
-    let extract_status = Command::new(&z_bin)
-        .args([
-            "e",
-            &iso.to_string_lossy(),
-            &format!("-o{}", iso_mt),
-            &install_file,
-            "-y",
-        ])
-        .status();
-
-    if extract_status.is_err() || !extract_status.unwrap().success() || !device_exists(&drive) {
-        let _ = tx.send(ProgressMsg::Error(
-            "Failed to extract install.wim/esd from ISO".into(),
-        ));
-        return;
-    }
-
-    // `7z e` flattens paths, so the file lands directly in iso_mt (not iso_mt/sources/).
-    let install_full_path = format!("{}/{}", iso_mt, install_file.split('/').last().unwrap());
-
-    let wim_size = match std::fs::metadata(&install_full_path) {
-        Ok(m) => m.len() as f64,
-        Err(_) => 4_000_000_000.0,
-    };
-
-    let is_active = Arc::new(Mutex::new(true));
-    let phase = Arc::new(Mutex::new(1));
-
-    let is_active_t = is_active.clone();
-    let phase_t = phase.clone();
-    let tx_t = tx.clone();
-    let usb_mt_t = usb_mt.clone();
-    let drive_t = drive.clone();
-
-    thread::spawn(move || {
-        let total_wim_mb = wim_size / 1024.0 / 1024.0;
-        let mut baseline_size = 0.0;
-
-        while *is_active_t.lock().unwrap() {
-            if !device_exists(&drive_t) {
-                break;
-            }
-
-            let current_phase = *phase_t.lock().unwrap();
-            let output = Command::new("du").args(["-sb", &usb_mt_t]).output();
-
-            if let Ok(out) = output {
-                let stdout = String::from_utf8_lossy(&out.stdout);
-                if let Some(size_str) = stdout.split_whitespace().next() {
-                    if let Ok(current_bytes) = size_str.parse::<f64>() {
-                        if current_phase == 1 {
+        let active = active.clone();
+        let phase = phase.clone();
+        let usb_mt = usb_mt.clone();
+        let drive = drive.clone();
+        thread::spawn(move || {
+            let total_mb = wim_size / 1024.0 / 1024.0;
+            let mut baseline = 0.0;
+            while active.load(Ordering::SeqCst) {
+                if !device_exists(&drive) {
+                    break;
+                }
+                let out = host_cmd("du").args(["-sb", &usb_mt]).output();
+                if let Ok(out) = out {
+                    let s = String::from_utf8_lossy(&out.stdout);
+                    if let Some(Ok(cur)) = s.split_whitespace().next().map(|x| x.parse::<f64>()) {
+                        if phase.load(Ordering::SeqCst) == 1 {
                             let dirty = get_system_dirty_bytes();
-                            let actual = (current_bytes - dirty).max(0.0);
-                            let progress = 0.05 + ((actual / 500_000_000.0).min(1.0) * 0.20);
-                            let _ = tx_t.send(ProgressMsg::Update(
-                                "Extracting boot files...".to_string(),
-                                progress,
-                            ));
-                            baseline_size = current_bytes;
+                            let actual = (cur - dirty).max(0.0);
+                            let p = 0.05 + ((actual / 500_000_000.0).min(1.0) * 0.20);
+                            emit_progress("Extracting boot files...", p);
+                            baseline = cur;
                         } else {
-                            let wim_progress_bytes = (current_bytes - baseline_size).max(0.0);
-                            let mb = wim_progress_bytes / 1024.0 / 1024.0;
-                            let progress = 0.25 + ((wim_progress_bytes / wim_size).min(1.0) * 0.55);
-                            let _ = tx_t.send(ProgressMsg::Update(
-                                format!(
-                                    "Splitting install.wim: {:.0} / {:.0} MB",
-                                    mb, total_wim_mb
+                            let done = (cur - baseline).max(0.0);
+                            let p = 0.25 + ((done / wim_size).min(1.0) * 0.55);
+                            emit_progress(
+                                &format!(
+                                    "Writing install image: {:.0} / {:.0} MB",
+                                    done / 1024.0 / 1024.0,
+                                    total_mb
                                 ),
-                                progress,
-                            ));
+                                p,
+                            );
                         }
                     }
                 }
+                thread::sleep(Duration::from_millis(500));
             }
-            thread::sleep(std::time::Duration::from_millis(500));
-        }
-    });
-
-    let status_7z = Command::new(&z_bin)
-        .args([
-            "x",
-            &iso.to_string_lossy(),
-            &format!("-o{}", usb_mt),
-            &format!("-xr!{}", install_file.split('/').last().unwrap()),
-            "-y",
-        ])
-        .status();
-
-    if status_7z.is_err() || !status_7z.unwrap().success() || !device_exists(&drive) {
-        *is_active.lock().unwrap() = false;
-        let _ = tx.send(ProgressMsg::Error(
-            "Drive removed or 7z error during extraction.".into(),
-        ));
-        return;
+        });
     }
 
-    {
-        let mut p = phase.lock().unwrap();
-        *p = 2;
+    // ── extract everything except the install image onto the USB ──
+    let ok = run(Command::new(&z_bin).args([
+        "x",
+        "-bd",
+        &iso_s,
+        &format!("-o{}", usb_mt),
+        &format!("-xr!{}", install_name),
+        "-y",
+    ]));
+    if !matches!(ok, Ok(true)) || !device_exists(&drive) {
+        active.store(false, Ordering::SeqCst);
+        return Err(match ok {
+            Err(e) => e,
+            _ => "Drive removed or 7z error during extraction.".into(),
+        });
     }
+    phase.store(2, Ordering::SeqCst);
 
-    let dst_path = format!("{}/sources/install.{}", usb_mt, extension);
-    let status_wim = Command::new(get_local_bin("wimlib-imagex"))
-        .args(["split", &install_full_path, &dst_path, "3400"])
-        .status();
-
-    if status_wim.is_err() || !status_wim.unwrap().success() || !device_exists(&drive) {
-        *is_active.lock().unwrap() = false;
-        let _ = tx.send(ProgressMsg::Error(
-            "Drive removed or wimlib error during split.".into(),
-        ));
-        return;
+    // ── split (wim) or copy (esd) ──
+    let ok = if is_wim {
+        let dst = format!("{}/sources/install.swm", usb_mt);
+        run(Command::new(get_local_bin("wimlib-imagex")).args([
+            "split",
+            &install_full_path,
+            &dst,
+            "3400",
+        ]))
+    } else {
+        let dst = format!("{}/sources/install.esd", usb_mt);
+        run(host_cmd("cp").args([&install_full_path, &dst]))
+    };
+    active.store(false, Ordering::SeqCst);
+    if !matches!(ok, Ok(true)) || !device_exists(&drive) {
+        return Err(match ok {
+            Err(e) => e,
+            _ => "Drive removed or error while writing install image.".into(),
+        });
     }
+    let _ = fs::remove_file(&install_full_path);
 
-    *is_active.lock().unwrap() = false;
-
-    // Clean up the extracted wim/esd copy from /tmp now that it's been split onto the USB.
-    let _ = std::fs::remove_file(&install_full_path);
-
+    // ── flush + unmount (both can block, so run them off-thread) ──
     let initial_dirty = get_system_dirty_bytes().max(1.0);
-    let usb_mt_c = usb_mt.clone();
-    let iso_mt_c = iso_mt.clone();
-    let unmount_done = Arc::new(Mutex::new(false));
-    let unmount_error = Arc::new(Mutex::new(None));
-    let unmount_done_t = unmount_done.clone();
-    let unmount_err_t = unmount_error.clone();
-    let drive_check = drive.clone();
+    log(
+        "helper",
+        &format!(
+            "dirty before sync: {:.1} MB",
+            initial_dirty / 1024.0 / 1024.0
+        ),
+    );
+    let finish_done = Arc::new(AtomicBool::new(false));
+    {
+        let finish_done = finish_done.clone();
+        let usb_mt = usb_mt.clone();
+        thread::spawn(move || {
+            let _ = run(&mut host_cmd("sync"));
+            if !sys_umount(&usb_mt) {
+                log(
+                    "helper",
+                    &format!(
+                        "umount failed ({}), trying lazy",
+                        io::Error::last_os_error()
+                    ),
+                );
+                sys_umount_lazy(&usb_mt);
+            }
+            finish_done.store(true, Ordering::SeqCst);
+        });
+    }
+    while !finish_done.load(Ordering::SeqCst) {
+        if CANCELLED.load(Ordering::SeqCst) {
+            return Err("Cancelled".into());
+        }
+        if !device_exists(&drive) {
+            return Err("Drive disconnected during final sync.".into());
+        }
+        let dirty = get_system_dirty_bytes();
+        if dirty > 10.0 * 1024.0 * 1024.0 {
+            let p = 0.80 + ((1.0 - (dirty / initial_dirty)) * 0.19);
+            emit_progress(
+                &format!("Flushing cache: {:.1} MB left", dirty / 1024.0 / 1024.0),
+                p.min(0.99),
+            );
+        } else {
+            emit("PULSE Finishing writes, please don't unplug...");
+        }
+        thread::sleep(Duration::from_millis(200));
+    }
+    if !device_exists(&drive) {
+        return Err("Drive was unplugged during final sync.".into());
+    }
+    Ok(())
+}
+
+// ─────────────────────────── GUI ───────────────────────────
+// Runs as the normal user.
+
+struct AppState {
+    drive: Option<String>,
+    iso: Option<PathBuf>,
+}
+
+enum ProgressMsg {
+    Update(String, f64),
+    Pulse(String),
+    Finished,
+    Error(String),
+}
+
+// Keeping this open keeps the helper alive; dropping it cancels the flash.
+static HELPER_STDIN: Mutex<Option<ChildStdin>> = Mutex::new(None);
+
+fn close_helper_pipe() {
+    if let Ok(mut g) = HELPER_STDIN.lock() {
+        if g.take().is_some() {
+            log("gui", "closed helper stdin (cancel signal)");
+        }
+    }
+}
+
+fn cleanup_processes() {
+    log("gui", "exiting");
+    close_helper_pipe();
+    // Give the helper a moment to see EOF before we vanish.
+    thread::sleep(Duration::from_millis(100));
+    process::exit(0);
+}
+
+fn gui_main() {
+    log("gui", "starting");
+    ctrlc::set_handler(move || {
+        cleanup_processes();
+    })
+    .expect("Error setting Ctrl-C handler");
+
+    let app = libadwaita::Application::builder()
+        .application_id("io.github.windusb")
+        .build();
+    app.connect_activate(build_ui);
+    app.run();
+}
+
+fn is_valid_windows_iso(path: &Path) -> bool {
+    let z_bin = get_local_bin("7z");
+    match capture(Command::new(z_bin).args(["l", &path.to_string_lossy()])) {
+        Ok(s) => {
+            let l = s.to_lowercase();
+            l.contains("sources/install.wim") || l.contains("sources/install.esd")
+        }
+        Err(_) => false,
+    }
+}
+
+fn spawn_helper(drive: String, iso: PathBuf, tx: mpsc::Sender<ProgressMsg>) {
+    let exe = env::var_os("APPIMAGE")
+        .map(PathBuf::from)
+        .or_else(|| env::current_exe().ok());
+    let exe = match exe {
+        Some(e) => e,
+        None => {
+            let _ = tx.send(ProgressMsg::Error("Cannot locate application path".into()));
+            return;
+        }
+    };
+
+    log(
+        "gui",
+        &format!(
+            "pkexec {} --flash {} {}",
+            exe.display(),
+            drive,
+            iso.display()
+        ),
+    );
+    let mut child = match Command::new("pkexec")
+        .arg(&exe)
+        .arg("--flash")
+        .arg(&drive)
+        .arg(&iso)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+    {
+        Ok(c) => c,
+        Err(e) => {
+            let _ = tx.send(ProgressMsg::Error(format!("Cannot start pkexec: {}", e)));
+            return;
+        }
+    };
+
+    if let Some(stdin) = child.stdin.take() {
+        *HELPER_STDIN.lock().unwrap() = Some(stdin);
+    }
+    let stdout = child.stdout.take();
 
     thread::spawn(move || {
-        let s1 = Command::new("sync").status();
-        let s2 = Command::new("umount").arg("-l").arg(&usb_mt_c).status();
-        // iso_mt is now a plain extraction directory (never mounted), so just remove it.
-        let _ = std::fs::remove_dir_all(&iso_mt_c);
-
-        if s1.is_err() || s2.is_err() || !Path::new(&drive_check).exists() {
-            let mut err = unmount_err_t.lock().unwrap();
-            *err = Some("Sync failed. Drive was likely unplugged.".to_string());
+        let mut finished = false;
+        if let Some(out) = stdout {
+            for line in BufReader::new(out).lines() {
+                let line = match line {
+                    Ok(l) => l,
+                    Err(_) => break,
+                };
+                // PULSE lines arrive every 200 ms; don't flood the trace with them.
+                if !line.starts_with("PULSE ") {
+                    log("gui<-", &line);
+                }
+                if let Some(rest) = line.strip_prefix("PROGRESS ") {
+                    let mut it = rest.splitn(2, ' ');
+                    let frac = it.next().and_then(|f| f.parse::<f64>().ok()).unwrap_or(0.0);
+                    let text = it.next().unwrap_or("").to_string();
+                    let _ = tx.send(ProgressMsg::Update(text, frac));
+                } else if let Some(text) = line.strip_prefix("PULSE ") {
+                    let _ = tx.send(ProgressMsg::Pulse(text.to_string()));
+                } else if line == "DONE" {
+                    finished = true;
+                    let _ = tx.send(ProgressMsg::Finished);
+                } else if let Some(e) = line.strip_prefix("ERROR ") {
+                    finished = true;
+                    let _ = tx.send(ProgressMsg::Error(e.to_string()));
+                }
+            }
         }
-        let mut done = unmount_done_t.lock().unwrap();
-        *done = true;
+        let status = child.wait();
+        log("gui", &format!("helper exited: {:?}", status));
+        close_helper_pipe();
+        if !finished {
+            let msg = match status.ok().and_then(|s| s.code()) {
+                Some(126) | Some(127) => "Authentication was cancelled or failed.",
+                _ => "The flashing helper exited unexpectedly.",
+            };
+            let _ = tx.send(ProgressMsg::Error(msg.into()));
+        }
     });
-
-    let mut spin_idx = 0;
-    let spinners = vec!["-", "\\", "|", "/"];
-    loop {
-        if *unmount_done.lock().unwrap() {
-            break;
-        }
-
-        if let Some(err_msg) = unmount_error.lock().unwrap().clone() {
-            let _ = tx.send(ProgressMsg::Error(err_msg));
-            return;
-        }
-
-        if !device_exists(&drive) {
-            let _ = tx.send(ProgressMsg::Error(
-                "Drive disconnected during final sync.".into(),
-            ));
-            return;
-        }
-
-        let current_dirty = get_system_dirty_bytes();
-        let sync_progress = 0.80 + ((1.0 - (current_dirty / initial_dirty)) * 0.19);
-
-        if current_dirty <= 10.0 * 1024.0 * 1024.0 {
-            spin_idx = (spin_idx + 1) % 4;
-            let _ = tx.send(ProgressMsg::Update(
-                format!("Finishing writes... {}", spinners[spin_idx]),
-                0.99,
-            ));
-        } else {
-            let mb_left = current_dirty / 1024.0 / 1024.0;
-            let _ = tx.send(ProgressMsg::Update(
-                format!("Flushing cache: {:.1} MB left", mb_left),
-                sync_progress.min(0.99),
-            ));
-        }
-        thread::sleep(std::time::Duration::from_millis(200));
-    }
-
-    let _ = tx.send(ProgressMsg::Finished);
 }
 
 fn build_ui(app: &libadwaita::Application) {
-    if unsafe { libc::getuid() } != 0 {
-        escalate_privileges();
+    // ── icon setup (new) ──
+    if let Some(display) = gtk4::gdk::Display::default() {
+        if let Ok(appdir) = env::var("APPDIR") {
+            gtk4::IconTheme::for_display(&display)
+                .add_search_path(format!("{}/usr/share/icons", appdir));
+        }
     }
+    gtk4::Window::set_default_icon_name("io.github.windusb");
     let provider = gtk4::CssProvider::new();
-    provider.load_from_data("
-    button { border-radius: 99px; padding-left: 24px; padding-right: 24px; min-height: 38px; }
-    .invalid-iso { background-color: rgba(237, 51, 59, 0.15); border: 1px solid #ed333b; border-radius: 12px; }
-    .invalid-iso label { color: #ff7b72; }
+    provider.load_from_data(b"
+    button.pill-btn { border-radius: 99px; padding-left: 24px; padding-right: 24px; min-height: 38px; }
+    .invalid-iso { background-color: alpha(@error_color, 0.15); border: 1px solid @error_color; border-radius: 12px; }
+    .invalid-iso label { color: @error_color; }
     .title-4 { margin-bottom: 8px; }
 
     progressbar progress {
-    background-color: #612a74;
-    background-image: none;
-    min-height: 12px;
-    border-radius: 99px;
-}
+        background-color: @accent_bg_color;
+        background-image: none;
+        min-height: 12px;
+        border-radius: 99px;
+    }
 
-progressbar trough {
-background-color: rgba(145, 65, 172, 0.1);
-    min-height: 12px;
-    border-radius: 99px;
-}
-");
-    gtk4::style_context_add_provider_for_display(
+    progressbar trough {
+        background-color: alpha(@accent_bg_color, 0.15);
+        min-height: 12px;
+        border-radius: 99px;
+    }
+    ");
+    gtk4::StyleContext::add_provider_for_display(
         &gtk4::gdk::Display::default().expect("Could not connect to a display."),
         &provider,
         gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
-    let style_manager = libadwaita::StyleManager::default();
-    style_manager.set_color_scheme(libadwaita::ColorScheme::PreferDark);
+    // No forced color scheme: libadwaita follows the system light/dark setting.
+
     let state = Arc::new(Mutex::new(AppState {
         drive: None,
         iso: None,
@@ -425,7 +802,7 @@ background-color: rgba(145, 65, 172, 0.1);
         .build();
     window.connect_close_request(|_| {
         cleanup_processes();
-        glib::Propagation::Proceed
+        gtk4::Inhibit(false)
     });
     let root_box = gtk4::Box::new(gtk4::Orientation::Vertical, 0);
     let header_bar = libadwaita::HeaderBar::new();
@@ -443,6 +820,7 @@ background-color: rgba(145, 65, 172, 0.1);
         .justify(gtk4::Justification::Center)
         .build();
     let progress_bar = gtk4::ProgressBar::new();
+    progress_bar.set_pulse_step(0.15);
     let percent_label = gtk4::Label::builder()
         .label("0%")
         .width_chars(5)
@@ -451,12 +829,14 @@ background-color: rgba(145, 65, 172, 0.1);
     percent_label.add_css_class("caption");
     let finish_btn = gtk4::Button::with_label("Finish & Exit");
     finish_btn.add_css_class("suggested-action");
+    finish_btn.add_css_class("pill-btn");
     finish_btn.set_visible(false);
     finish_btn.connect_clicked(|_| {
         cleanup_processes();
     });
     let cancel_btn = gtk4::Button::with_label("Cancel");
     cancel_btn.add_css_class("destructive-action");
+    cancel_btn.add_css_class("pill-btn");
     cancel_btn.connect_clicked(|_| {
         cleanup_processes();
     });
@@ -466,7 +846,7 @@ background-color: rgba(145, 65, 172, 0.1);
     let fb_c = finish_btn.clone();
     let cb_c = cancel_btn.clone();
     let pl_c = percent_label.clone();
-    glib::timeout_add_local(std::time::Duration::from_millis(50), move || {
+    glib::timeout_add_local(Duration::from_millis(50), move || {
         while let Ok(msg) = receiver.try_recv() {
             match msg {
                 ProgressMsg::Update(text, fraction) => {
@@ -474,6 +854,11 @@ background-color: rgba(145, 65, 172, 0.1);
                     pb_c.set_fraction(fraction);
                     let p = (fraction * 100.0).floor() as u32;
                     pl_c.set_text(&format!("{}%", p));
+                }
+                ProgressMsg::Pulse(text) => {
+                    st_c.set_text(&text);
+                    pb_c.pulse();
+                    pl_c.set_text("");
                 }
                 ProgressMsg::Finished => {
                     st_c.set_text("Installation Finished! You can now safely unplug the drive.");
@@ -492,7 +877,7 @@ background-color: rgba(145, 65, 172, 0.1);
                 }
             }
         }
-        glib::ControlFlow::Continue
+        glib::Continue(true)
     });
     let drive_page = build_drive_page(&stack, state.clone());
     let iso_page = build_iso_page(&stack, state.clone(), sender);
@@ -530,6 +915,7 @@ fn build_drive_page(stack: &gtk4::Stack, state: Arc<Mutex<AppState>>) -> gtk4::B
     box_.append(&list_box);
     let next_btn = gtk4::Button::with_label("Next");
     next_btn.add_css_class("suggested-action");
+    next_btn.add_css_class("pill-btn");
     next_btn.set_sensitive(false);
     next_btn.set_halign(gtk4::Align::Center);
     next_btn.set_margin_top(12);
@@ -546,7 +932,9 @@ fn build_drive_page(stack: &gtk4::Stack, state: Arc<Mutex<AppState>>) -> gtk4::B
     list_box.connect_row_selected(move |_, row| {
         if let Some(row) = row {
             let row_action = row.downcast_ref::<libadwaita::ActionRow>().unwrap();
-            s_c.lock().unwrap().drive = Some(row_action.title().to_string());
+            let title = row_action.title().to_string();
+            log("gui", &format!("selected drive {}", title));
+            s_c.lock().unwrap().drive = Some(title);
             nb_c.set_sensitive(true);
         }
     });
@@ -580,8 +968,10 @@ fn build_iso_page(
     btn_box.set_halign(gtk4::Align::Center);
     btn_box.set_margin_top(12);
     let back_btn = gtk4::Button::with_label("Back");
+    back_btn.add_css_class("pill-btn");
     let start_btn = gtk4::Button::with_label("Flash USB");
     start_btn.add_css_class("destructive-action");
+    start_btn.add_css_class("pill-btn");
     start_btn.set_sensitive(false);
     let st_c = stack.clone();
     back_btn.connect_clicked(move |_| {
@@ -601,9 +991,9 @@ fn build_iso_page(
             ],
         );
 
-        let user_home = std::env::var("USER_HOME").unwrap_or_else(|_| "/home".to_string());
-        let downloads = format!("{}/Downloads", user_home);
-        if std::path::Path::new(&downloads).exists() {
+        let home = env::var("HOME").unwrap_or_else(|_| "/home".to_string());
+        let downloads = format!("{}/Downloads", home);
+        if Path::new(&downloads).exists() {
             let _ = dialog.set_current_folder(Some(&gtk4::gio::File::for_path(downloads)));
         }
 
@@ -619,6 +1009,7 @@ fn build_iso_page(
             if res == gtk4::ResponseType::Ok {
                 if let Some(file) = d.file() {
                     let path = file.path().unwrap();
+                    log("gui", &format!("selected ISO {}", path.display()));
                     if is_valid_windows_iso(&path) {
                         r_i.remove_css_class("invalid-iso");
                         r_i.set_title("Selected (Valid)");
@@ -661,7 +1052,7 @@ fn build_iso_page(
                 let iso = s.iso.clone().unwrap();
                 let tx = tx_conf.clone();
                 thread::spawn(move || {
-                    run_flasher(drv, iso, tx);
+                    spawn_helper(drv, iso, tx);
                 });
             }
             d.destroy();
@@ -711,17 +1102,14 @@ fn refresh_drives(list: &gtk4::ListBox) {
         list.remove(&child);
     }
     let lsblk_bin = get_local_bin("lsblk");
-    if let Ok(out) = Command::new(lsblk_bin)
-        .args(["-pno", "NAME,SIZE,MODEL,TRAN"])
-        .output()
-    {
-        let stdout = String::from_utf8_lossy(&out.stdout);
+    // -d: whole disks only, -p: full /dev paths
+    if let Ok(stdout) = capture(Command::new(lsblk_bin).args(["-dpno", "NAME,SIZE,MODEL,TRAN"])) {
         for line in stdout.lines().filter(|l| l.contains("usb")) {
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() >= 2 {
                 let row = libadwaita::ActionRow::builder()
                     .title(parts[0])
-                    .subtitle(parts[1..].join(" "))
+                    .subtitle(&parts[1..].join(" "))
                     .activatable(true)
                     .build();
                 row.add_prefix(&gtk4::Image::from_icon_name(
@@ -731,33 +1119,4 @@ fn refresh_drives(list: &gtk4::ListBox) {
             }
         }
     }
-}
-
-fn escalate_privileges() {
-    let args: Vec<String> = env::args().collect();
-    let appimage = env::var("APPIMAGE").expect("APPIMAGE env var not found");
-    let mut cmd = Command::new("pkexec");
-    cmd.arg("env");
-    let vars = [
-        "DISPLAY",
-        "XAUTHORITY",
-        "WAYLAND_DISPLAY",
-        "XDG_RUNTIME_DIR",
-        "DBUS_SESSION_BUS_ADDRESS",
-        "XDG_SESSION_TYPE",
-        "APPDIR",
-        "PATH",
-        "LD_LIBRARY_PATH",
-        "APPIMAGE",
-        "XDG_DATA_DIRS",
-    ];
-    for var in vars {
-        if let Ok(val) = env::var(var) {
-            cmd.arg(format!("{}={}", var, val));
-        }
-    }
-    if let Ok(home) = env::var("HOME") {
-        cmd.arg(format!("USER_HOME={}", home));
-    }
-    let _ = cmd.arg(&appimage).args(&args[1..]).exec();
 }

@@ -80,19 +80,20 @@ if [ "$CLEAN_START" = true ]; then
     make -j$(nproc) LDFLAGS="-static"
     cp src/mkfs.fat "$BIN_DIR/" && cd ..
 
-    echo "📦 Building util-linux..."
+    echo "📦 Building util-linux (static, no libmount/libblkid shared libs)..."
     wget -qN "$URL_UTIL_LINUX"
     tar -xf util-linux-2.41.3.tar.gz && cd util-linux-2.41.3
     ./configure --disable-all-programs --enable-wipefs --enable-lsblk --enable-blockdev \
                 --enable-libuuid --enable-libblkid --enable-libsmartcols --enable-libmount \
+                --disable-shared --enable-static \
                 --disable-bash-completion --disable-nls --without-python --without-systemd --without-udev \
                 LDFLAGS="-static"
     make -j$(nproc)
-    
+
     find . -type f -name wipefs -not -path "*/scripts/*" -exec file {} + | grep "ELF" | cut -d: -f1 | head -n 1 | xargs -I {} cp {} "$BIN_DIR/wipefs"
     find . -type f -name lsblk -not -path "*/scripts/*" -exec file {} + | grep "ELF" | cut -d: -f1 | head -n 1 | xargs -I {} cp {} "$BIN_DIR/lsblk"
     find . -type f -name blockdev -not -path "*/scripts/*" -exec file {} + | grep "ELF" | cut -d: -f1 | head -n 1 | xargs -I {} cp {} "$BIN_DIR/blockdev"
-    
+
     LOCAL_UUID_DIR=$(pwd)
     cd ..
 
@@ -115,14 +116,14 @@ if [ "$CLEAN_START" = true ]; then
     wget -qN "$URL_PARTED"
     tar -xf parted-3.6.tar.xz && cd parted-3.6
     sed -i 's/do_version ()/do_version (PedDevice** dev, PedDisk** diskp)/g' parted/parted.c
-    
-    # Updated flags to point Parted to the local libuuid we just built
+
+    # Point Parted to the local libuuid we just built
     ./configure --enable-static --disable-shared --without-readline --disable-device-mapper --disable-nls \
                 LDFLAGS="-static -L$LOCAL_UUID_DIR/.libs" \
                 CPPFLAGS="-I$LOCAL_UUID_DIR/libuuid/src" \
                 UUID_LIBS="-L$LOCAL_UUID_DIR/.libs -luuid" \
                 UUID_CFLAGS="-I$LOCAL_UUID_DIR/libuuid/src"
-    
+
     make -j$(nproc)
     find . -type f -name partprobe -not -path "*/scripts/*" -exec file {} + | grep "ELF" | cut -d: -f1 | head -n 1 | xargs -I {} cp {} "$BIN_DIR/partprobe"
     cd ..
@@ -149,11 +150,16 @@ strip "$BIN_DIR/windusb-gui"
 if [ "$CLEAN_START" = true ]; then
     echo "📚 Gathering libraries recursively for maximum portability..."
     EXCLUDE_LIST="libc.so|libpthread.so|libdl.so|libm.so|librt.so|libgcc_s.so|libstdc++.so|libresolv.so|libcrypt.so|libutil.so|libnsl.so|libGL|libnvidia|libdrm|libX11|libxcb|libasound|libpulse|ld-linux"
+    # Always use the host's copy of these (they must match each other and the host system)
+    SYSTEM_LIBS="libmount\.so|libblkid\.so"
     TEMP_LIBS="all_libs.txt"
     > "$TEMP_LIBS"
 
-    get_deps() { 
-        ldd "$1" 2>/dev/null | grep "=> /" | awk '{print $3}'; 
+    # Filtering here means the scan never walks into the excluded libs, so their
+    # own dependencies are not pulled in either. '|| true' keeps set -e happy
+    # when grep -v filters out every line.
+    get_deps() {
+        ldd "$1" 2>/dev/null | grep "=> /" | awk '{print $3}' | grep -vE "/($SYSTEM_LIBS)" || true
     }
 
     echo -n "🔍 Analyzing dependencies: "
@@ -179,6 +185,10 @@ if [ "$CLEAN_START" = true ]; then
     rm "$TEMP_LIBS"
 fi
 
+# Runs on every build (fast builds reuse an old lib-local that may still hold these)
+echo "🧹 Removing libs that must come from the system..."
+rm -f "$LIB_DIR"/libmount.so* "$LIB_DIR"/libblkid.so*
+
 echo "📊 Binary Status Check:"
 for bin in "$BIN_DIR"/*; do
     [ -e "$bin" ] || continue
@@ -191,6 +201,13 @@ for bin in "$BIN_DIR"/*; do
         fi
     fi
 done
+
+echo "🔎 Checking lib-local for excluded libs..."
+if ls "$LIB_DIR" | grep -E 'libmount|libblkid'; then
+    echo "  ❌ libmount/libblkid still present in lib-local"
+else
+    echo "  ✅ none bundled (system versions will be used)"
+fi
 
 echo "🚀 Packaging AppImage..."
 [ -f "$APP_DIR/AppRun" ] && chmod +x "$APP_DIR/AppRun"
