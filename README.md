@@ -2,7 +2,7 @@
 
 **WindUSB-GUI** is a modern, Rust-based graphical tool for creating bootable Windows USB installers on Linux. It is a GTK4/Libadwaita wrapper based on the original [WindUSB CLI bash script](https://github.com/Broly1/Windusb/blob/main/windusb.sh).
 
-This tool handles partitioning, formatting (FAT32), and automatically splitting large `install.wim` files to ensure UEFI compatibility.
+This tool handles partitioning, formatting (FAT32), and automatically splitting large `install.wim` files to ensure UEFI FAT32 compatibility.
 
 ### 📸 Screenshots
 
@@ -12,16 +12,14 @@ This tool handles partitioning, formatting (FAT32), and automatically splitting 
 | **3: Valid Windows ISO** | **4: Flashing Process** |
 | <img src="https://raw.githubusercontent.com/Broly1/images/main/windusb-gui/Screenshot_20260211_114653.png" width="400"> | <img src="https://raw.githubusercontent.com/Broly1/images/main/windusb-gui/Screenshot_20260211_114714.png" width="400"> |
 
-## 🛠️ Requirements for Building
-
-The new build system is designed to be highly independent. You only need the basic development headers on your host machine; the script handles the complex system tools by compiling them from source.
-
 ### 1. Host Build Dependencies
 
-On **Arch Linux**, ensure you have the base development tools:
+On **Ubuntu 24.04**, ensure you have the base development tools and required libraries (note: this will not work on older Ubuntu versions below 24.04):
 
 ```bash
-sudo pacman -S base-devel rust git
+sudo apt update
+sudo apt install -y build-essential curl wget file libssl-dev pkg-config libpopt-dev uuid-dev libblkid-dev libglib2.0-dev libpango1.0-dev libgtk-4-dev libadwaita-1-dev
+curl --proto '=https' --tlsv1.2 -sSf [https://sh.rustup.rs](https://sh.rustup.rs) | sh -s -- -y
 
 ```
 
@@ -36,21 +34,20 @@ The `build.sh` script is a "Portable Build Engine" that automatically downloads,
 ## 🚀 How to Build & Bundle
 
 1. **Clone the repo:**
+
 ```bash
-git clone https://github.com/YourUsername/WindUSB-GUI.git
+git clone [https://github.com/YourUsername/WindUSB-GUI.git](https://github.com/YourUsername/WindUSB-GUI.git)
 cd WindUSB-GUI
 
 ```
 
-
 2. **Run the build script:**
+
 ```bash
 chmod +x build.sh
 ./build.sh
 
 ```
-
-
 
 ### Build Options
 
@@ -68,14 +65,14 @@ WindUSB-GUI is only possible thanks to the incredible work of the open-source co
 | **GNU Parted** | Partition manipulation and partprobe | [gnu.org/s/parted](https://www.gnu.org/software/parted/) |
 | **GPT Fdisk** | GPT partitioning (sgdisk) | [rodsbooks.com/gdisk](https://www.rodsbooks.com/gdisk/) |
 | **util-linux** | wipefs and block device management | [kernel.org](https://github.com/util-linux/util-linux) |
-| **dosfstools** | FAT32 filesystem creation | [github.com/dosfstools](https://github.com/dosfstools/dosfstools) |
+| **dosfstools** | FAT32 filesystem creation | [github.com/dosfstools/dosfstools](https://github.com/dosfstools/dosfstools) |
 | **7-Zip** | ISO verification and extraction | [7-zip.org](https://www.7-zip.org/) |
 | **AppImageTool** | Packaging and portability | [appimage.org](https://appimage.org/) |
 
 ## ⚠️ Current Status
 
-* **Host OS:** Built and tested on Arch Linux.
-* **Portability:** The AppImage uses a **Recursive Dependency Trace** to bundle its own graphics and GUI stack, ensuring compatibility with Pop!_OS, Fedora, Ubuntu, and Debian.
+* **Host OS:** Built and tested on Ubuntu 24.04 (does not work on Ubuntu versions below 24.04).
+* **Portability & Compatibility:** Tested and working on Ubuntu 24.04, 26.04, Debian 13, Linux Mint 22.3, Fedora 44, and Arch. The AppImage uses a **Recursive Dependency Trace** to bundle its own graphics and GUI stack, ensuring compatibility across distributions.
 
 ## ⚖️ License
 

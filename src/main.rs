@@ -5,7 +5,7 @@ use std::env;
 use std::ffi::CString;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
-use std::os::unix::fs::FileTypeExt;
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::process::{self, ChildStdin, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering};
@@ -21,7 +21,8 @@ static START: OnceLock<Instant> = OnceLock::new();
 /// Live trace to stderr: [seconds] [tag] message
 fn log(tag: &str, msg: &str) {
     let t = START.get_or_init(Instant::now).elapsed().as_secs_f64();
-    eprintln!("[{:8.3}] [{:<8}] {}", t, tag, msg);
+    // Never panic if stderr is gone (terminal closed): a panic here would skip cleanup.
+    let _ = writeln!(io::stderr(), "[{:8.3}] [{:<8}] {}", t, tag, msg);
 }
 
 /// Read a pipe and log every line as it arrives. Splits on \n and \r so
@@ -277,6 +278,8 @@ fn main() {
 static CANCELLED: AtomicBool = AtomicBool::new(false);
 static CHILD_PID: AtomicI32 = AtomicI32::new(0);
 static DIRS: Mutex<Option<(String, String)>> = Mutex::new(None);
+static CANCEL_STARTED: AtomicBool = AtomicBool::new(false);
+static SIG_PIPE_W: AtomicI32 = AtomicI32::new(-1);
 
 fn emit(line: &str) {
     if line.starts_with("ERROR") || line == "DONE" {
@@ -311,6 +314,10 @@ fn run(cmd: &mut Command) -> Result<bool, String> {
         .spawn()
         .map_err(|e| format!("Failed to start {:?}: {}", cmd.get_program(), e))?;
     CHILD_PID.store(child.id() as i32, Ordering::SeqCst);
+    // Cancel may have fired between the check above and the spawn.
+    if CANCELLED.load(Ordering::SeqCst) {
+        let _ = child.kill();
+    }
 
     let h1 = stream(child.stdout.take().unwrap(), "out");
     let h2 = stream(child.stderr.take().unwrap(), "err");
@@ -329,8 +336,10 @@ fn run(cmd: &mut Command) -> Result<bool, String> {
         .map_err(|e| format!("Wait failed: {}", e))
 }
 
+/// Remove the temp dirs. Idempotent and safe to call from several threads
+/// (the removals simply find nothing to do the second time).
 fn cleanup_dirs() {
-    let dirs = DIRS.lock().unwrap().clone();
+    let dirs = DIRS.lock().unwrap_or_else(|e| e.into_inner()).clone();
     if let Some((usb, iso)) = dirs {
         log(
             "cleanup",
@@ -342,6 +351,124 @@ fn cleanup_dirs() {
     }
 }
 
+/// Start an orderly shutdown: stop the running tool, then guarantee cleanup
+/// and exit even if the main thread is stuck. Safe to call repeatedly.
+fn begin_cancel(reason: &str) {
+    log("helper", &format!("{} -> cancelling", reason));
+    CANCELLED.store(true, Ordering::SeqCst);
+    if CANCEL_STARTED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let pid = CHILD_PID.load(Ordering::SeqCst);
+    if pid > 0 {
+        log("helper", &format!("killing child pid {}", pid));
+        unsafe {
+            libc::kill(pid, libc::SIGKILL);
+        }
+    }
+    // Normally the main thread notices CANCELLED, cleans up and exits.
+    // This is the failsafe in case it is stuck (e.g. in sync).
+    thread::spawn(|| {
+        thread::sleep(Duration::from_secs(5));
+        cleanup_dirs();
+        process::exit(130);
+    });
+}
+
+/// Async-signal-safe: just poke the self-pipe; a normal thread does the work.
+extern "C" fn on_signal(_sig: libc::c_int) {
+    let fd = SIG_PIPE_W.load(Ordering::Relaxed);
+    if fd >= 0 {
+        let b = 1u8;
+        unsafe {
+            libc::write(fd, &b as *const u8 as *const libc::c_void, 1);
+        }
+    }
+}
+
+/// Without this, Ctrl+C / closing the terminal / `kill` kills the root helper
+/// instantly (default signal action) and nothing is cleaned up.
+fn install_signal_handlers() {
+    let mut fds = [0i32; 2];
+    if unsafe { libc::pipe2(fds.as_mut_ptr(), libc::O_CLOEXEC | libc::O_NONBLOCK) } != 0 {
+        log("helper", "pipe2 failed, signal handling disabled");
+        return;
+    }
+    let rfd = fds[0];
+    SIG_PIPE_W.store(fds[1], Ordering::SeqCst);
+    for sig in [libc::SIGINT, libc::SIGTERM, libc::SIGHUP, libc::SIGQUIT] {
+        unsafe {
+            libc::signal(sig, on_signal as *const () as libc::sighandler_t);
+        }
+    }
+    thread::spawn(move || {
+        let mut b = [0u8; 1];
+        loop {
+            // Read end is non-blocking too (same pipe2 flags), so poll gently.
+            let n = unsafe { libc::read(rfd, b.as_mut_ptr() as *mut libc::c_void, 1) };
+            if n > 0 {
+                begin_cancel("signal received");
+                break;
+            }
+            thread::sleep(Duration::from_millis(50));
+        }
+    });
+}
+
+fn pid_alive(pid: i32) -> bool {
+    unsafe { libc::kill(pid, 0) == 0 || io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH) }
+}
+
+/// Remove leftovers from earlier runs that were hard-killed (SIGKILL, VM
+/// power-off, crash). Only touches root-owned directories named
+/// windusb_{usb,iso}_<pid> whose pid no longer exists.
+fn sweep_stale_dirs(extra_root: Option<&str>) {
+    let mut roots: Vec<String> = vec!["/var/tmp".into(), "/tmp".into()];
+    if let Some(p) = extra_root {
+        roots.push(p.to_string());
+    }
+    let me = process::id() as i32;
+    for root in roots {
+        let rd = match fs::read_dir(&root) {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        for entry in rd.flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            let (is_usb, pid_str) = if let Some(p) = name.strip_prefix("windusb_usb_") {
+                (true, p)
+            } else if let Some(p) = name.strip_prefix("windusb_iso_") {
+                (false, p)
+            } else {
+                continue;
+            };
+            let pid: i32 = match pid_str.parse() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if pid == me || pid_alive(pid) {
+                continue;
+            }
+            let path = entry.path();
+            let meta = match fs::symlink_metadata(&path) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if !meta.is_dir() || meta.uid() != 0 {
+                continue;
+            }
+            let p = path.to_string_lossy().to_string();
+            log("cleanup", &format!("removing stale {}", p));
+            if is_usb {
+                sys_umount_lazy(&p);
+                let _ = fs::remove_dir(&p); // never recursive on a mount point
+            } else {
+                let _ = fs::remove_dir_all(&p);
+            }
+        }
+    }
+}
+
 fn helper_main(drive: &str, iso: &str) -> ! {
     if unsafe { libc::getuid() } != 0 {
         emit("ERROR Helper must run as root");
@@ -349,7 +476,11 @@ fn helper_main(drive: &str, iso: &str) -> ! {
     }
     log("helper", &format!("started: drive={} iso={}", drive, iso));
 
-    // Cancel watcher: GUI closing our stdin means "stop".
+    // Ctrl+C / SIGTERM / SIGHUP must trigger cleanup instead of killing us.
+    install_signal_handlers();
+
+    // Cancel watcher: GUI closing our stdin means "stop" (also fires if the
+    // GUI crashes or is SIGKILLed, since the kernel closes the pipe).
     thread::spawn(|| {
         let mut buf = [0u8; 64];
         let mut stdin = io::stdin();
@@ -359,22 +490,16 @@ fn helper_main(drive: &str, iso: &str) -> ! {
                 Ok(_) => {}
             }
         }
-        log("helper", "stdin closed -> cancelling");
-        CANCELLED.store(true, Ordering::SeqCst);
-        let pid = CHILD_PID.load(Ordering::SeqCst);
-        if pid > 0 {
-            log("helper", &format!("killing child pid {}", pid));
-            unsafe {
-                libc::kill(pid, libc::SIGKILL);
-            }
-        }
-        // Failsafe in case the main thread is stuck (e.g. in sync).
-        thread::sleep(Duration::from_secs(5));
-        cleanup_dirs();
-        process::exit(130);
+        begin_cancel("stdin closed");
     });
 
-    let result = flash(drive, iso);
+    // Leftovers from earlier runs that were hard-killed.
+    let iso_parent = Path::new(iso).parent().map(|p| p.to_string_lossy().to_string());
+    sweep_stale_dirs(iso_parent.as_deref());
+
+    // catch_unwind: a panic must still reach cleanup_dirs().
+    let result = std::panic::catch_unwind(|| flash(drive, iso))
+        .unwrap_or_else(|_| Err("Internal error".to_string()));
     cleanup_dirs();
     match result {
         Ok(()) => {
@@ -495,10 +620,11 @@ fn flash(drive_arg: &str, iso_arg: &str) -> Result<(), String> {
     let pid = process::id();
     let usb_mt = format!("/tmp/windusb_usb_{}", pid); // tiny mount point, RAM-backed is fine
     let iso_mt = format!("{}/windusb_iso_{}", work_base, pid); // big temp file, disk-backed
+    // Register BEFORE creating, so any failure (or cancel) from here on is cleaned up.
+    *DIRS.lock().unwrap_or_else(|e| e.into_inner()) = Some((usb_mt.clone(), iso_mt.clone()));
     fs::create_dir(&usb_mt).map_err(|e| format!("Cannot create {}: {}", usb_mt, e))?;
     fs::create_dir(&iso_mt).map_err(|e| format!("Cannot create {}: {}", iso_mt, e))?;
     log("helper", &format!("temp dirs: {} {}", usb_mt, iso_mt));
-    *DIRS.lock().unwrap() = Some((usb_mt.clone(), iso_mt.clone()));
 
     // ── format ──
     emit_progress(&format!("Formatting drive {}...", drive), 0.02);
