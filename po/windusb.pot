@@ -1,0 +1,209 @@
+# WindUSB-GUI translation template
+# This file is distributed under the same license as WindUSB-GUI (GPL-3.0-or-later).
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: windusb-gui\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#. Window title
+msgid "WindUSB Creator"
+msgstr ""
+
+#. Drive page
+msgid "Select USB Drive"
+msgstr ""
+
+msgid "Next"
+msgstr ""
+
+#. ISO page
+msgid "Select Windows ISO"
+msgstr ""
+
+msgid "Select ISO File"
+msgstr ""
+
+msgid "Click to browse"
+msgstr ""
+
+msgid "Back"
+msgstr ""
+
+msgid "Flash USB"
+msgstr ""
+
+#. File chooser buttons (_ marks the keyboard shortcut letter)
+msgid "_Cancel"
+msgstr ""
+
+msgid "_Open"
+msgstr ""
+
+msgid "Windows ISOs (*.iso)"
+msgstr ""
+
+msgid "Selected (Valid)"
+msgstr ""
+
+msgid "Invalid ISO"
+msgstr ""
+
+msgid "Missing install.wim/esd"
+msgstr ""
+
+#. Confirmation dialog. {} is the drive, e.g. /dev/sdb
+msgid "WARNING: ALL DATA on {} will be DELETED. Proceed?"
+msgstr ""
+
+msgid "_Yes"
+msgstr ""
+
+msgid "_No"
+msgstr ""
+
+#. Progress page
+msgid "Waiting..."
+msgstr ""
+
+msgid "Cancel"
+msgstr ""
+
+msgid "Finish & Exit"
+msgstr ""
+
+msgid "Close"
+msgstr ""
+
+msgid "Installation Finished! You can now safely unplug the drive."
+msgstr ""
+
+#. {} is the error message
+msgid "Error: {}"
+msgstr ""
+
+msgid "Cannot locate application path"
+msgstr ""
+
+msgid "Cannot start pkexec: {}"
+msgstr ""
+
+msgid "Authentication was cancelled or failed."
+msgstr ""
+
+msgid "The flashing helper exited unexpectedly."
+msgstr ""
+
+#. Progress messages sent by the flashing helper
+msgid "Formatting drive {}..."
+msgstr ""
+
+msgid "Extracting install image..."
+msgstr ""
+
+msgid "Extracting boot files..."
+msgstr ""
+
+#. {} / {} are megabytes written / total
+msgid "Writing install image: {} / {} MB"
+msgstr ""
+
+msgid "Flushing cache: {} MB left"
+msgstr ""
+
+msgid "Finishing writes, please don't unplug..."
+msgstr ""
+
+#. Error messages sent by the flashing helper
+msgid "Helper must run as root"
+msgstr ""
+
+msgid "Internal error"
+msgstr ""
+
+msgid "Cancelled"
+msgstr ""
+
+msgid "Device not found: {}"
+msgstr ""
+
+msgid "Target is not under /dev"
+msgstr ""
+
+msgid "Cannot stat device: {}"
+msgstr ""
+
+msgid "Target is not a block device"
+msgstr ""
+
+msgid "lsblk failed: {}"
+msgstr ""
+
+msgid "Refusing to write: target is not a USB disk"
+msgstr ""
+
+msgid "ISO not found: {}"
+msgstr ""
+
+msgid "ISO path is not a regular file"
+msgstr ""
+
+msgid "7z failed: {}"
+msgstr ""
+
+msgid "Invalid ISO: install.wim/esd not found"
+msgstr ""
+
+#. First {} is a size in MB, second {} lists the checked folders
+msgid "Not enough temporary disk space: need {} MB ({}). Free up space and try again."
+msgstr ""
+
+#. {} is a folder, then the system error
+msgid "Cannot create {}: {}"
+msgstr ""
+
+msgid "Drive disconnected before formatting"
+msgstr ""
+
+msgid "Partitioning failed (sgdisk). Drive may have been removed."
+msgstr ""
+
+msgid "Partition did not appear after partitioning."
+msgstr ""
+
+msgid "Formatting failed. Drive may have been removed."
+msgstr ""
+
+msgid "Failed to mount USB drive: {}"
+msgstr ""
+
+msgid "mount failed: {}"
+msgstr ""
+
+msgid "Failed to extract install.wim/esd from ISO"
+msgstr ""
+
+msgid "install.esd is larger than 4 GB and cannot be stored on FAT32"
+msgstr ""
+
+msgid "Drive removed or 7z error during extraction."
+msgstr ""
+
+msgid "Drive removed or error while writing install image."
+msgstr ""
+
+msgid "Drive disconnected during final sync."
+msgstr ""
+
+msgid "Drive was unplugged during final sync."
+msgstr ""
+
+#. {} is a program name, then the system error
+msgid "Failed to start {}: {}"
+msgstr ""
+
+msgid "Wait failed: {}"
+msgstr ""

@@ -55,6 +55,14 @@ chmod +x build.sh
 * **Rust Only (`n`):** Skips tool compilation and library gathering, only updating the Rust binary. Use this for fast iteration during development.
 * **Git Preservation:** The script automatically preserves `.gitkeep` files in `bin-local` and `lib-local` to maintain repository structure.
 
+## 🌍 Translations
+
+WindUSB-GUI follows your system language. Available: **English**, **Brazilian Portuguese** and **Spanish**.
+
+To force a language, start it with e.g. `LANGUAGE=es ./WindUSB-x86_64.AppImage`.
+
+Want to add or improve a translation? It only takes one text file in [`po/`](po/), no coding needed. See [po/README.md](po/README.md).
+
 ## 🤝 Credits & Appreciation
 
 WindUSB-GUI is only possible thanks to the incredible work of the open-source community. We rely on and extend our gratitude to the following projects:

@@ -1,0 +1,209 @@
+# WindUSB-GUI translation: Brazilian Portuguese
+# This file is distributed under the same license as WindUSB-GUI (GPL-3.0-or-later).
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: windusb-gui\n"
+"Language: pt_BR\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#. Window title
+msgid "WindUSB Creator"
+msgstr "WindUSB - Criador de USB"
+
+#. Drive page
+msgid "Select USB Drive"
+msgstr "Selecione o pendrive"
+
+msgid "Next"
+msgstr "Avançar"
+
+#. ISO page
+msgid "Select Windows ISO"
+msgstr "Selecione a ISO do Windows"
+
+msgid "Select ISO File"
+msgstr "Selecionar arquivo ISO"
+
+msgid "Click to browse"
+msgstr "Clique para procurar"
+
+msgid "Back"
+msgstr "Voltar"
+
+msgid "Flash USB"
+msgstr "Gravar USB"
+
+#. File chooser buttons (_ marks the keyboard shortcut letter)
+msgid "_Cancel"
+msgstr "_Cancelar"
+
+msgid "_Open"
+msgstr "_Abrir"
+
+msgid "Windows ISOs (*.iso)"
+msgstr "ISOs do Windows (*.iso)"
+
+msgid "Selected (Valid)"
+msgstr "Selecionada (válida)"
+
+msgid "Invalid ISO"
+msgstr "ISO inválida"
+
+msgid "Missing install.wim/esd"
+msgstr "install.wim/esd não encontrado"
+
+#. Confirmation dialog. {} is the drive, e.g. /dev/sdb
+msgid "WARNING: ALL DATA on {} will be DELETED. Proceed?"
+msgstr "ATENÇÃO: TODOS OS DADOS em {} serão APAGADOS. Continuar?"
+
+msgid "_Yes"
+msgstr "_Sim"
+
+msgid "_No"
+msgstr "_Não"
+
+#. Progress page
+msgid "Waiting..."
+msgstr "Aguardando..."
+
+msgid "Cancel"
+msgstr "Cancelar"
+
+msgid "Finish & Exit"
+msgstr "Concluir e sair"
+
+msgid "Close"
+msgstr "Fechar"
+
+msgid "Installation Finished! You can now safely unplug the drive."
+msgstr "Instalação concluída! Agora você pode remover o pendrive com segurança."
+
+#. {} is the error message
+msgid "Error: {}"
+msgstr "Erro: {}"
+
+msgid "Cannot locate application path"
+msgstr "Não foi possível localizar o caminho do aplicativo"
+
+msgid "Cannot start pkexec: {}"
+msgstr "Não foi possível iniciar o pkexec: {}"
+
+msgid "Authentication was cancelled or failed."
+msgstr "A autenticação foi cancelada ou falhou."
+
+msgid "The flashing helper exited unexpectedly."
+msgstr "O processo de gravação foi encerrado inesperadamente."
+
+#. Progress messages sent by the flashing helper
+msgid "Formatting drive {}..."
+msgstr "Formatando o dispositivo {}..."
+
+msgid "Extracting install image..."
+msgstr "Extraindo a imagem de instalação..."
+
+msgid "Extracting boot files..."
+msgstr "Extraindo arquivos de inicialização..."
+
+#. {} / {} are megabytes written / total
+msgid "Writing install image: {} / {} MB"
+msgstr "Gravando a imagem de instalação: {} / {} MB"
+
+msgid "Flushing cache: {} MB left"
+msgstr "Esvaziando o cache: faltam {} MB"
+
+msgid "Finishing writes, please don't unplug..."
+msgstr "Finalizando a gravação, não remova o dispositivo..."
+
+#. Error messages sent by the flashing helper
+msgid "Helper must run as root"
+msgstr "O auxiliar precisa ser executado como root"
+
+msgid "Internal error"
+msgstr "Erro interno"
+
+msgid "Cancelled"
+msgstr "Cancelado"
+
+msgid "Device not found: {}"
+msgstr "Dispositivo não encontrado: {}"
+
+msgid "Target is not under /dev"
+msgstr "O destino não está em /dev"
+
+msgid "Cannot stat device: {}"
+msgstr "Não foi possível ler as informações do dispositivo: {}"
+
+msgid "Target is not a block device"
+msgstr "O destino não é um dispositivo de bloco"
+
+msgid "lsblk failed: {}"
+msgstr "lsblk falhou: {}"
+
+msgid "Refusing to write: target is not a USB disk"
+msgstr "Gravação recusada: o destino não é um disco USB"
+
+msgid "ISO not found: {}"
+msgstr "ISO não encontrada: {}"
+
+msgid "ISO path is not a regular file"
+msgstr "O caminho da ISO não é um arquivo comum"
+
+msgid "7z failed: {}"
+msgstr "7z falhou: {}"
+
+msgid "Invalid ISO: install.wim/esd not found"
+msgstr "ISO inválida: install.wim/esd não encontrado"
+
+#. First {} is a size in MB, second {} lists the checked folders
+msgid "Not enough temporary disk space: need {} MB ({}). Free up space and try again."
+msgstr "Espaço temporário em disco insuficiente: são necessários {} MB ({}). Libere espaço e tente novamente."
+
+#. {} is a folder, then the system error
+msgid "Cannot create {}: {}"
+msgstr "Não foi possível criar {}: {}"
+
+msgid "Drive disconnected before formatting"
+msgstr "O dispositivo foi desconectado antes da formatação"
+
+msgid "Partitioning failed (sgdisk). Drive may have been removed."
+msgstr "Falha ao particionar (sgdisk). O dispositivo pode ter sido removido."
+
+msgid "Partition did not appear after partitioning."
+msgstr "A partição não apareceu após o particionamento."
+
+msgid "Formatting failed. Drive may have been removed."
+msgstr "Falha na formatação. O dispositivo pode ter sido removido."
+
+msgid "Failed to mount USB drive: {}"
+msgstr "Falha ao montar o pendrive: {}"
+
+msgid "mount failed: {}"
+msgstr "falha na montagem: {}"
+
+msgid "Failed to extract install.wim/esd from ISO"
+msgstr "Falha ao extrair install.wim/esd da ISO"
+
+msgid "install.esd is larger than 4 GB and cannot be stored on FAT32"
+msgstr "install.esd tem mais de 4 GB e não pode ser armazenado em FAT32"
+
+msgid "Drive removed or 7z error during extraction."
+msgstr "Dispositivo removido ou erro do 7z durante a extração."
+
+msgid "Drive removed or error while writing install image."
+msgstr "Dispositivo removido ou erro ao gravar a imagem de instalação."
+
+msgid "Drive disconnected during final sync."
+msgstr "O dispositivo foi desconectado durante a sincronização final."
+
+msgid "Drive was unplugged during final sync."
+msgstr "O dispositivo foi removido durante a sincronização final."
+
+#. {} is a program name, then the system error
+msgid "Failed to start {}: {}"
+msgstr "Falha ao iniciar {}: {}"
+
+msgid "Wait failed: {}"
+msgstr "Falha ao aguardar o processo: {}"

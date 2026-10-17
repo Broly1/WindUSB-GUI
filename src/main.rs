@@ -14,6 +14,9 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 
+mod i18n;
+use i18n::{tr, tr_msg, trf};
+
 // ───────────────────────── shared ─────────────────────────
 
 static START: OnceLock<Instant> = OnceLock::new();
@@ -268,6 +271,8 @@ fn main() {
 // ───────────────────── privileged helper ─────────────────────
 // Runs as root via pkexec. Talks to the GUI over stdout (progress)
 // and stdin (EOF == cancel). Diagnostics go to stderr.
+// Messages stay in English; the GUI translates them (see src/i18n.rs).
+// If you reword one, update its msgid in po/ too, or it shows in English.
 //
 // Protocol lines (stdout):
 //   PROGRESS <fraction> <text>   determinate progress
@@ -1014,7 +1019,7 @@ fn build_ui(app: &libadwaita::Application) {
     }));
     let window = libadwaita::ApplicationWindow::builder()
         .application(app)
-        .title("WindUSB Creator")
+        .title(&tr("WindUSB Creator"))
         .default_width(550)
         .default_height(380)
         .resizable(false)
@@ -1034,7 +1039,7 @@ fn build_ui(app: &libadwaita::Application) {
     let stack = gtk4::Stack::new();
     stack.set_transition_type(gtk4::StackTransitionType::SlideLeftRight);
     let status_label = gtk4::Label::builder()
-        .label("Waiting...")
+        .label(&tr("Waiting..."))
         .wrap(true)
         .justify(gtk4::Justification::Center)
         .build();
@@ -1046,14 +1051,14 @@ fn build_ui(app: &libadwaita::Application) {
         .valign(gtk4::Align::Center)
         .build();
     percent_label.add_css_class("caption");
-    let finish_btn = gtk4::Button::with_label("Finish & Exit");
+    let finish_btn = gtk4::Button::with_label(&tr("Finish & Exit"));
     finish_btn.add_css_class("suggested-action");
     finish_btn.add_css_class("pill-btn");
     finish_btn.set_visible(false);
     finish_btn.connect_clicked(|_| {
         cleanup_processes();
     });
-    let cancel_btn = gtk4::Button::with_label("Cancel");
+    let cancel_btn = gtk4::Button::with_label(&tr("Cancel"));
     cancel_btn.add_css_class("destructive-action");
     cancel_btn.add_css_class("pill-btn");
     cancel_btn.connect_clicked(|_| {
@@ -1069,29 +1074,29 @@ fn build_ui(app: &libadwaita::Application) {
         while let Ok(msg) = receiver.try_recv() {
             match msg {
                 ProgressMsg::Update(text, fraction) => {
-                    st_c.set_text(&text);
+                    st_c.set_text(&tr_msg(&text));
                     pb_c.set_fraction(fraction);
                     let p = (fraction * 100.0).floor() as u32;
                     pl_c.set_text(&format!("{}%", p));
                 }
                 ProgressMsg::Pulse(text) => {
-                    st_c.set_text(&text);
+                    st_c.set_text(&tr_msg(&text));
                     pb_c.pulse();
                     pl_c.set_text("");
                 }
                 ProgressMsg::Finished => {
-                    st_c.set_text("Installation Finished! You can now safely unplug the drive.");
+                    st_c.set_text(&tr("Installation Finished! You can now safely unplug the drive."));
                     pb_c.set_visible(false);
                     pl_c.set_visible(false);
                     cb_c.set_visible(false);
                     fb_c.set_visible(true);
                 }
                 ProgressMsg::Error(err) => {
-                    st_c.set_text(&format!("Error: {}", err));
+                    st_c.set_text(&trf("Error: {}", &[&tr_msg(&err)]));
                     pb_c.add_css_class("error");
                     pl_c.set_visible(false);
                     cb_c.set_visible(false);
-                    fb_c.set_label("Close");
+                    fb_c.set_label(&tr("Close"));
                     fb_c.set_visible(true);
                 }
             }
@@ -1120,7 +1125,7 @@ fn build_ui(app: &libadwaita::Application) {
 fn build_drive_page(stack: &gtk4::Stack, state: Arc<Mutex<AppState>>) -> gtk4::Box {
     let box_ = gtk4::Box::new(gtk4::Orientation::Vertical, 16);
     let header_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
-    let label = gtk4::Label::new(Some("Select USB Drive"));
+    let label = gtk4::Label::new(Some(&tr("Select USB Drive")));
     label.add_css_class("title-4");
     label.set_hexpand(true);
     label.set_halign(gtk4::Align::Start);
@@ -1132,7 +1137,7 @@ fn build_drive_page(stack: &gtk4::Stack, state: Arc<Mutex<AppState>>) -> gtk4::B
     let list_box = gtk4::ListBox::new();
     list_box.add_css_class("boxed-list");
     box_.append(&list_box);
-    let next_btn = gtk4::Button::with_label("Next");
+    let next_btn = gtk4::Button::with_label(&tr("Next"));
     next_btn.add_css_class("suggested-action");
     next_btn.add_css_class("pill-btn");
     next_btn.set_sensitive(false);
@@ -1170,14 +1175,14 @@ fn build_iso_page(
     sender: mpsc::Sender<ProgressMsg>,
 ) -> gtk4::Box {
     let box_ = gtk4::Box::new(gtk4::Orientation::Vertical, 16);
-    let label = gtk4::Label::new(Some("Select Windows ISO"));
+    let label = gtk4::Label::new(Some(&tr("Select Windows ISO")));
     label.add_css_class("title-4");
     label.set_halign(gtk4::Align::Start);
     let list_box = gtk4::ListBox::new();
     list_box.add_css_class("boxed-list");
     let iso_row = libadwaita::ActionRow::builder()
-        .title("Select ISO File")
-        .subtitle("Click to browse")
+        .title(&tr("Select ISO File"))
+        .subtitle(&tr("Click to browse"))
         .activatable(true)
         .build();
     let folder_icon = gtk4::Image::from_icon_name("folder-open-symbolic");
@@ -1186,9 +1191,9 @@ fn build_iso_page(
     let btn_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 16);
     btn_box.set_halign(gtk4::Align::Center);
     btn_box.set_margin_top(12);
-    let back_btn = gtk4::Button::with_label("Back");
+    let back_btn = gtk4::Button::with_label(&tr("Back"));
     back_btn.add_css_class("pill-btn");
-    let start_btn = gtk4::Button::with_label("Flash USB");
+    let start_btn = gtk4::Button::with_label(&tr("Flash USB"));
     start_btn.add_css_class("destructive-action");
     start_btn.add_css_class("pill-btn");
     start_btn.set_sensitive(false);
@@ -1201,12 +1206,12 @@ fn build_iso_page(
     let r_c = iso_row.clone();
     iso_row.connect_activated(move |_| {
         let dialog = gtk4::FileChooserDialog::new(
-            Some("Select Windows ISO"),
+            Some(&tr("Select Windows ISO")),
             Some(&r_c.root().and_downcast::<gtk4::Window>().unwrap()),
             gtk4::FileChooserAction::Open,
             &[
-                ("_Cancel", gtk4::ResponseType::Cancel),
-                ("_Open", gtk4::ResponseType::Ok),
+                (&tr("_Cancel"), gtk4::ResponseType::Cancel),
+                (&tr("_Open"), gtk4::ResponseType::Ok),
             ],
         );
 
@@ -1217,7 +1222,7 @@ fn build_iso_page(
         }
 
         let filter = gtk4::FileFilter::new();
-        filter.set_name(Some("Windows ISOs (*.iso)"));
+        filter.set_name(Some(&tr("Windows ISOs (*.iso)")));
         filter.add_pattern("*.iso");
         filter.add_pattern("*.ISO");
         dialog.add_filter(&filter);
@@ -1231,14 +1236,14 @@ fn build_iso_page(
                     log("gui", &format!("selected ISO {}", path.display()));
                     if is_valid_windows_iso(&path) {
                         r_i.remove_css_class("invalid-iso");
-                        r_i.set_title("Selected (Valid)");
+                        r_i.set_title(&tr("Selected (Valid)"));
                         r_i.set_subtitle(&path.file_name().unwrap().to_string_lossy());
                         s_i.lock().unwrap().iso = Some(path);
                         b_i.set_sensitive(true);
                     } else {
                         r_i.add_css_class("invalid-iso");
-                        r_i.set_title("Invalid ISO");
-                        r_i.set_subtitle("Missing install.wim/esd");
+                        r_i.set_title(&tr("Invalid ISO"));
+                        r_i.set_subtitle(&tr("Missing install.wim/esd"));
                         b_i.set_sensitive(false);
                     }
                 }
@@ -1254,12 +1259,15 @@ fn build_iso_page(
             Some(&btn.root().and_downcast::<gtk4::Window>().unwrap()),
             gtk4::DialogFlags::MODAL,
             gtk4::MessageType::Warning,
-            gtk4::ButtonsType::YesNo,
-            &format!(
+            gtk4::ButtonsType::None,
+            &trf(
                 "WARNING: ALL DATA on {} will be DELETED. Proceed?",
-                drive_name
+                &[&drive_name],
             ),
         );
+        // Own Yes/No buttons (same responses as ButtonsType::YesNo) so they follow the app language.
+        confirm.add_button(&tr("_No"), gtk4::ResponseType::No);
+        confirm.add_button(&tr("_Yes"), gtk4::ResponseType::Yes);
         let st_conf = st_flash.clone();
         let s_conf = state.clone();
         let tx_conf = sender.clone();
