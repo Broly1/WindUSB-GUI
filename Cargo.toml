@@ -1,6 +1,6 @@
 [package]
 name = "windusb-gui"
-version = "1.0.1"
+version = "1.1.0"
 authors = ["Broly <jack_sparrow_xv@proton.me>"]
 edition = "2021"
 description = "Create bootable Windows USB drives on Linux"
