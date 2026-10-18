@@ -21,6 +21,7 @@ use i18n::{tr, tr_msg, trf};
 
 static START: OnceLock<Instant> = OnceLock::new();
 
+const APP_ID: &str = "io.github.windusb";
 const DONATE_URL: &str = "https://www.paypal.com/paypalme/bmacffe";
 
 /// Live trace to stderr: [seconds] [tag] message
@@ -877,11 +878,119 @@ fn gui_main() {
     })
     .expect("Error setting Ctrl-C handler");
 
+    // X11 WM_CLASS comes from the program name; make it match the app id too.
+    glib::set_prgname(Some(APP_ID));
+    install_desktop_entry();
+
     let app = libadwaita::Application::builder()
-        .application_id("io.github.windusb")
+        .application_id(APP_ID)
         .build();
     app.connect_activate(build_ui);
     app.run();
+}
+
+/// Quote a path for a .desktop Exec= key (Desktop Entry spec, "Exec key").
+fn desktop_exec_quote(path: &str) -> String {
+    let mut out = String::from("\"");
+    for c in path.chars() {
+        match c {
+            '"' | '`' | '$' | '\\' => {
+                out.push('\\');
+                out.push(c);
+            }
+            '%' => out.push_str("%%"),
+            _ => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
+/// On Wayland the compositor (KWin, GNOME Shell, ...) picks the window icon by
+/// looking up <app id>.desktop, so an AppImage that was never "installed" shows
+/// a generic icon. Write a hidden entry plus the icon into the user's data dir.
+/// Hidden (NoDisplay) so it doesn't add a menu item that goes stale when the
+/// AppImage is moved; it's rewritten on every launch if the path changed.
+fn install_desktop_entry() {
+    let (Some(appimage), Ok(appdir)) = (env::var_os("APPIMAGE"), env::var("APPDIR")) else {
+        return; // not running from an AppImage (e.g. cargo run)
+    };
+    if unsafe { libc::getuid() } == 0 {
+        return; // don't litter root's home
+    }
+    let data_home = match env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
+        Some(d) => PathBuf::from(d),
+        None => match env::var_os("HOME") {
+            Some(h) => PathBuf::from(h).join(".local/share"),
+            None => return,
+        },
+    };
+
+    let icon_dir = data_home.join("icons/hicolor/256x256/apps");
+    let icon_path = icon_dir.join(format!("{}.png", APP_ID));
+    let desktop_dir = data_home.join("applications");
+    let desktop_path = desktop_dir.join(format!("{}.desktop", APP_ID));
+
+    let icon_src = Path::new(&appdir).join(format!("{}.png", APP_ID));
+    let icon_changed = match (fs::read(&icon_src), fs::read(&icon_path)) {
+        (Ok(new), Ok(old)) => new != old,
+        (Ok(_), Err(_)) => true,
+        (Err(e), _) => {
+            log("gui", &format!("desktop entry: no icon at {}: {}", icon_src.display(), e));
+            return;
+        }
+    };
+    if icon_changed {
+        if let Err(e) = fs::create_dir_all(&icon_dir).and_then(|_| fs::copy(&icon_src, &icon_path)) {
+            log("gui", &format!("desktop entry: cannot write {}: {}", icon_path.display(), e));
+            return;
+        }
+    }
+
+    // Absolute Icon= path: works even when a stale icon-theme.cache in
+    // ~/.local/share/icons/hicolor hides newly added theme icons.
+    let entry = format!(
+        "[Desktop Entry]\n\
+         Type=Application\n\
+         Name=WindUSB\n\
+         Comment=Create Windows Bootable USB\n\
+         Exec={}\n\
+         Icon={}\n\
+         Terminal=false\n\
+         Categories=System;\n\
+         StartupWMClass={}\n\
+         NoDisplay=true\n\
+         X-WindUSB-Generated=true\n",
+        desktop_exec_quote(&appimage.to_string_lossy()),
+        icon_path.display(),
+        APP_ID,
+    );
+    if !icon_changed && fs::read_to_string(&desktop_path).ok().as_deref() == Some(entry.as_str()) {
+        return; // already up to date
+    }
+    if let Err(e) = fs::create_dir_all(&desktop_dir).and_then(|_| fs::write(&desktop_path, &entry)) {
+        log("gui", &format!("desktop entry: cannot write {}: {}", desktop_path.display(), e));
+        return;
+    }
+    log("gui", &format!("desktop entry: installed {}", desktop_path.display()));
+
+    // KWin reads the .desktop file directly, but Plasma's task manager goes
+    // through the KService cache, so refresh it now (before our window maps).
+    // Host binaries: drop the AppImage's bundled lib path.
+    for tool in ["kbuildsycoca6", "kbuildsycoca5"] {
+        let ok = Command::new(tool)
+            .env_remove("LD_LIBRARY_PATH")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if ok {
+            log("gui", &format!("desktop entry: refreshed cache with {}", tool));
+            break;
+        }
+    }
 }
 
 fn is_valid_windows_iso(path: &Path) -> bool {
@@ -986,7 +1095,7 @@ fn build_ui(app: &libadwaita::Application) {
                 .add_search_path(format!("{}/usr/share/icons", appdir));
         }
     }
-    gtk4::Window::set_default_icon_name("io.github.windusb");
+    gtk4::Window::set_default_icon_name(APP_ID);
 
     let provider = gtk4::CssProvider::new();
     provider.load_from_data(b"

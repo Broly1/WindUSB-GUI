@@ -9,3 +9,4 @@ Terminal=false
 Categories=System;
 X-AppImage-Version=1.1.0
 StartupNotify=true
+StartupWMClass=io.github.windusb
