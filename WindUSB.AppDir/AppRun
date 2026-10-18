@@ -1,7 +1,10 @@
 #!/bin/bash
 HERE="$(dirname "$(readlink -f "${0}")")"
 export APPDIR="$HERE"
-export LD_LIBRARY_PATH="${HERE}/lib-local:${LD_LIBRARY_PATH}"
+# Never leave a trailing ':' when a variable is unset: an empty LD_LIBRARY_PATH
+# entry means "current directory", and an XDG_DATA_DIRS without the spec
+# default hides every system .desktop file (no default browser, no icons).
+export LD_LIBRARY_PATH="${HERE}/lib-local${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 export PATH="${HERE}/bin-local:${PATH}"
-export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS}"
+export XDG_DATA_DIRS="${HERE}/usr/share:${XDG_DATA_DIRS:-/usr/local/share:/usr/share}"
 exec "${HERE}/bin-local/windusb-gui" "$@"

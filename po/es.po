@@ -82,6 +82,10 @@ msgstr "Cerrar"
 msgid "Donate"
 msgstr "Donar"
 
+#. Shown when the donate link cannot be opened; the link is shown below it
+msgid "Could not open your web browser. You can copy the link below:"
+msgstr "No se pudo abrir el navegador web. Puede copiar el enlace a continuación:"
+
 msgid "Installation Finished! You can now safely unplug the drive."
 msgstr "¡Instalación completada! Ya puede desconectar la unidad de forma segura."
 
