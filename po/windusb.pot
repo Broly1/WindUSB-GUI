@@ -78,6 +78,10 @@ msgstr ""
 msgid "Close"
 msgstr ""
 
+#. Footer link to the PayPal donation page
+msgid "Donate"
+msgstr ""
+
 msgid "Installation Finished! You can now safely unplug the drive."
 msgstr ""
 

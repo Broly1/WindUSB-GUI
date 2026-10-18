@@ -78,6 +78,10 @@ msgstr "Concluir e sair"
 msgid "Close"
 msgstr "Fechar"
 
+#. Footer link to the PayPal donation page
+msgid "Donate"
+msgstr "Doar"
+
 msgid "Installation Finished! You can now safely unplug the drive."
 msgstr "Instalação concluída! Agora você pode remover o pendrive com segurança."
 

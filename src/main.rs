@@ -21,6 +21,8 @@ use i18n::{tr, tr_msg, trf};
 
 static START: OnceLock<Instant> = OnceLock::new();
 
+const DONATE_URL: &str = "https://www.paypal.com/paypalme/bmacffe";
+
 /// Live trace to stderr: [seconds] [tag] message
 fn log(tag: &str, msg: &str) {
     let t = START.get_or_init(Instant::now).elapsed().as_secs_f64();
@@ -992,6 +994,9 @@ fn build_ui(app: &libadwaita::Application) {
     .invalid-iso { background-color: alpha(@error_color, 0.15); border: 1px solid @error_color; border-radius: 12px; }
     .invalid-iso label { color: @error_color; }
     .title-4 { margin-bottom: 8px; }
+    button.donate-btn { min-height: 0; padding: 2px 8px; font-size: 0.85em; font-weight: normal; opacity: 0.6; }
+    button.donate-btn:hover { opacity: 1; }
+    .donate-heart { color: #e01b24; }
 
     progressbar progress {
         background-color: @accent_bg_color;
@@ -1035,7 +1040,8 @@ fn build_ui(app: &libadwaita::Application) {
     content_box.set_margin_start(30);
     content_box.set_margin_end(30);
     content_box.set_margin_top(30);
-    content_box.set_margin_bottom(30);
+    content_box.set_margin_bottom(4); // the donate footer below supplies the rest
+    content_box.set_vexpand(true); // keeps the donate footer pinned to the bottom
     let stack = gtk4::Stack::new();
     stack.set_transition_type(gtk4::StackTransitionType::SlideLeftRight);
     let status_label = gtk4::Label::builder()
@@ -1115,9 +1121,35 @@ fn build_ui(app: &libadwaita::Application) {
     stack.add_named(&drive_page, Some("drive"));
     stack.add_named(&iso_page, Some("iso"));
     stack.add_named(&prog_page, Some("progress"));
+    // Discreet donate link, bottom left on every page.
+    let donate_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
+    // A text heart instead of an icon name: always renders, whatever icon theme the host has.
+    let heart = gtk4::Label::new(Some("♥"));
+    heart.add_css_class("donate-heart");
+    let donate_label = gtk4::Label::new(Some(&tr("Donate")));
+    donate_box.append(&heart);
+    donate_box.append(&donate_label);
+    let donate_btn = gtk4::Button::builder()
+        .child(&donate_box)
+        .halign(gtk4::Align::Start)
+        .tooltip_text(DONATE_URL)
+        .build();
+    donate_btn.add_css_class("flat");
+    donate_btn.add_css_class("donate-btn");
+    let w_c = window.clone();
+    donate_btn.connect_clicked(move |_| {
+        log("gui", &format!("opening {}", DONATE_URL));
+        gtk4::show_uri(Some(&w_c), DONATE_URL, gtk4::gdk::CURRENT_TIME);
+    });
+    let footer = gtk4::Box::new(gtk4::Orientation::Horizontal, 0);
+    footer.set_margin_start(8);
+    footer.set_margin_bottom(8);
+    footer.append(&donate_btn);
+
     root_box.append(&header_bar);
     content_box.append(&stack);
     root_box.append(&content_box);
+    root_box.append(&footer);
     window.set_content(Some(&root_box));
     window.present();
 }
