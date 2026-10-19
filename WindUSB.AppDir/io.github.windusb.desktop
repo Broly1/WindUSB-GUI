@@ -7,6 +7,6 @@ Exec=AppRun
 Icon=io.github.windusb
 Terminal=false
 Categories=System;
-X-AppImage-Version=1.1.0
+X-AppImage-Version=1.1.1
 StartupNotify=true
 StartupWMClass=io.github.windusb
