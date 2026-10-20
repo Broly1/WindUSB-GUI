@@ -86,6 +86,54 @@ msgstr ""
 msgid "Could not open your web browser. You can copy the link below:"
 msgstr ""
 
+#. Main menu (hamburger button) tooltip
+msgid "Main Menu"
+msgstr ""
+
+#. Main menu item
+msgid "About WindUSB"
+msgstr ""
+
+#. Main menu item, and the title of the license window
+msgid "License"
+msgstr ""
+
+#. Short description in the About window
+msgid "Create bootable Windows USB drives on Linux"
+msgstr ""
+
+#. About window: heading above the list of third-party tools bundled in the AppImage
+msgid "Bundled tools"
+msgstr ""
+
+#. Title of the donate window
+msgid "Support WindUSB"
+msgstr ""
+
+#. Donate window: text above the payment options
+msgid "WindUSB is free and open source. If it helped you, consider supporting its development:"
+msgstr ""
+
+#. Donate window button
+msgid "Donate with PayPal"
+msgstr ""
+
+#. Donate window: heading of the Pix section (Pix is Brazil's instant payment system)
+msgid "Pix (Brazil)"
+msgstr ""
+
+#. Donate window: text above the Pix QR code
+msgid "Scan with your bank app, or copy the Pix code:"
+msgstr ""
+
+#. Donate window button
+msgid "Copy Pix Code"
+msgstr ""
+
+#. Shown on the Copy Pix Code button for 2 seconds after clicking it
+msgid "Copied!"
+msgstr ""
+
 msgid "Installation Finished! You can now safely unplug the drive."
 msgstr ""
 

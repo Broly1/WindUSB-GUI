@@ -86,6 +86,54 @@ msgstr "Doar"
 msgid "Could not open your web browser. You can copy the link below:"
 msgstr "Não foi possível abrir o navegador. Você pode copiar o link abaixo:"
 
+#. Main menu (hamburger button) tooltip
+msgid "Main Menu"
+msgstr "Menu principal"
+
+#. Main menu item
+msgid "About WindUSB"
+msgstr "Sobre o WindUSB"
+
+#. Main menu item, and the title of the license window
+msgid "License"
+msgstr "Licença"
+
+#. Short description in the About window
+msgid "Create bootable Windows USB drives on Linux"
+msgstr "Crie pendrives bootáveis do Windows no Linux"
+
+#. About window: heading above the list of third-party tools bundled in the AppImage
+msgid "Bundled tools"
+msgstr "Ferramentas incluídas"
+
+#. Title of the donate window
+msgid "Support WindUSB"
+msgstr "Apoie o WindUSB"
+
+#. Donate window: text above the payment options
+msgid "WindUSB is free and open source. If it helped you, consider supporting its development:"
+msgstr "O WindUSB é gratuito e de código aberto. Se ele te ajudou, considere apoiar o desenvolvimento:"
+
+#. Donate window button
+msgid "Donate with PayPal"
+msgstr "Doar com PayPal"
+
+#. Donate window: heading of the Pix section (Pix is Brazil's instant payment system)
+msgid "Pix (Brazil)"
+msgstr "Pix (Brasil)"
+
+#. Donate window: text above the Pix QR code
+msgid "Scan with your bank app, or copy the Pix code:"
+msgstr "Escaneie com o app do seu banco ou copie o código Pix:"
+
+#. Donate window button
+msgid "Copy Pix Code"
+msgstr "Copiar código Pix"
+
+#. Shown on the Copy Pix Code button for 2 seconds after clicking it
+msgid "Copied!"
+msgstr "Copiado!"
+
 msgid "Installation Finished! You can now safely unplug the drive."
 msgstr "Instalação concluída! Agora você pode remover o pendrive com segurança."
 

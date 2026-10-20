@@ -1,6 +1,6 @@
 [package]
 name = "windusb-gui"
-version = "1.1.1"
+version = "1.1.2"
 authors = ["Broly <jack_sparrow_xv@proton.me>"]
 edition = "2021"
 description = "Create bootable Windows USB drives on Linux"
@@ -11,7 +11,8 @@ libc = "0.2"
 ctrlc = "3.4"
 glib = "0.18"
 gtk4 = "0.5"
+qrcode = { version = "0.14", default-features = false }
 
 [dependencies.libadwaita]
 version = "0.2"
-features = ["v1_1"]
+features = ["v1_2"]
