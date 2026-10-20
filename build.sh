@@ -168,7 +168,10 @@ strip "$BIN_DIR/windusb-gui"
 
 if [ "$CLEAN_START" = true ]; then
     echo "📚 Gathering libraries recursively for maximum portability..."
-    EXCLUDE_LIST="libc.so|libpthread.so|libdl.so|libm.so|librt.so|libgcc_s.so|libstdc++.so|libresolv.so|libcrypt.so|libutil.so|libnsl.so|libGL|libnvidia|libdrm|libX11|libxcb|libasound|libpulse|ld-linux|libglib-2|libgobject-2|libgio-2|libgmodule-2|libgthread-2|libwayland|libEGL|libgbm|libpcre2-8|libgdk_pixbuf|librsvg"
+    EXCLUDE_LIST="libc.so|libpthread.so|libdl.so|libm.so|librt.so|libgcc_s.so|libstdc++.so|libresolv.so|libcrypt.so|libutil.so|libnsl.so|libGL|libnvidia|libdrm|libX11|libxcb|libasound|libpulse|ld-linux|libglib-2|libgobject-2|libgio-2|libgmodule-2|libgthread-2|libwayland|libEGL|libgbm|libpcre2-8|libgdk_pixbuf|librsvg|libfontconfig|libfreetype|libexpat"
+    # fontconfig must match the host's /etc/fonts config files (newer distros use syntax an
+    # older bundled copy can't parse: warnings, and those font rules get ignored); freetype
+    # and expat go with it.
     # Always use the host's copy of these (they must match each other and the host system)
     SYSTEM_LIBS="libmount\.so|libblkid\.so"
     TEMP_LIBS="all_libs.txt"
@@ -206,7 +209,8 @@ fi
 
 # Runs on every build (fast builds reuse an old lib-local that may still hold these)
 echo "🧹 Removing libs that must come from the system..."
-rm -f "$LIB_DIR"/libmount.so* "$LIB_DIR"/libblkid.so*
+rm -f "$LIB_DIR"/libmount.so* "$LIB_DIR"/libblkid.so* \
+      "$LIB_DIR"/libfontconfig.so* "$LIB_DIR"/libfreetype.so* "$LIB_DIR"/libexpat.so*
 
 echo "📊 Binary Status Check:"
 for bin in "$BIN_DIR"/*; do
@@ -222,8 +226,8 @@ for bin in "$BIN_DIR"/*; do
 done
 
 echo "🔎 Checking lib-local for excluded libs..."
-if ls "$LIB_DIR" | grep -E 'libmount|libblkid'; then
-    echo "  ❌ libmount/libblkid still present in lib-local"
+if ls "$LIB_DIR" | grep -E 'libmount|libblkid|libfontconfig|libfreetype|libexpat'; then
+    echo "  ❌ host-only libs still present in lib-local"
 else
     echo "  ✅ none bundled (system versions will be used)"
 fi
