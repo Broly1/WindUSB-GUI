@@ -1,0 +1,266 @@
+# WindUSB-GUI translation template
+
+# This file is distributed under the same license as WindUSB-GUI (GPL-3.0-or-later).
+
+msgid ""
+msgstr ""
+"Project-Id-Version: windusb-gui\\n"
+"Language: fr\\n"
+"MIME-Version: 1.0\\n"
+"Content-Type: text/plain; charset=UTF-8\\n"
+"Content-Transfer-Encoding: 8bit\\n"
+
+#. Window title
+msgid "WindUSB Creator"
+msgstr "Créateur WindUSB"
+
+#. Drive page
+msgid "Select USB Drive"
+msgstr "Sélectionner la clé USB"
+
+msgid "Next"
+msgstr "Suivant"
+
+#. ISO page
+msgid "Select Windows ISO"
+msgstr "Sélectionner l'ISO Windows"
+
+msgid "Select ISO File"
+msgstr "Sélectionner le fichier ISO"
+
+msgid "Click to browse"
+msgstr "Cliquer pour parcourir"
+
+msgid "Back"
+msgstr "Retour"
+
+msgid "Flash USB"
+msgstr "Flasher la clé USB"
+
+#. File chooser buttons (\_ marks the keyboard shortcut letter)
+msgid "\_Cancel"
+msgstr "\_Annuler"
+
+msgid "\_Open"
+msgstr "\_Ouvrir"
+
+msgid "Windows ISOs (*.iso)"
+msgstr "ISOs Windows (*.iso)"
+
+msgid "Selected (Valid)"
+msgstr "Sélectionné (Valide)"
+
+msgid "Invalid ISO"
+msgstr "ISO invalide"
+
+msgid "Missing install.wim/esd"
+msgstr "install.wim/esd manquant"
+
+#. Confirmation dialog. {} is the drive, e.g. /dev/sdb
+msgid "WARNING: ALL DATA on {} will be DELETED. Proceed?"
+msgstr "AVERTISSEMENT : TOUTES LES DONNÉES sur {} seront SUPPRIMÉES. Continuer ?"
+
+msgid "\_Yes"
+msgstr "\_Oui"
+
+msgid "\_No"
+msgstr "\_Non"
+
+#. Progress page
+msgid "Waiting..."
+msgstr "En attente..."
+
+msgid "Cancel"
+msgstr "Annuler"
+
+msgid "Finish & Exit"
+msgstr "Terminer et quitter"
+
+msgid "Close"
+msgstr "Fermer"
+
+#. Footer link to the PayPal donation page
+msgid "Donate"
+msgstr "Faire un don"
+
+#. Shown when the donate link cannot be opened; the link is shown below it
+msgid "Could not open your web browser. You can copy the link below:"
+msgstr "Impossible d'ouvrir votre navigateur web. Vous pouvez copier le lien ci-dessous :"
+
+#. Main menu (hamburger button) tooltip
+msgid "Main Menu"
+msgstr "Menu principal"
+
+#. Main menu item
+msgid "About WindUSB"
+msgstr "À propos de WindUSB"
+
+#. Main menu item, and the title of the license window
+msgid "License"
+msgstr "Licence"
+
+#. Short description in the About window
+msgid "Create bootable Windows USB drives on Linux"
+msgstr "Créer des clés USB d'installation de Windows sous Linux"
+
+#. About window: heading above the list of third-party tools bundled in the AppImage
+msgid "Bundled tools"
+msgstr "Outils intégrés"
+
+#. Title of the donate window
+msgid "Support WindUSB"
+msgstr "Soutenir WindUSB"
+
+#. Donate window: text above the payment options
+msgid "WindUSB is free and open source. If it helped you, consider supporting its development:"
+msgstr "WindUSB est gratuit et open source. S'il vous a été utile, pensez à soutenir son développement :"
+
+#. Donate window button
+msgid "Donate with PayPal"
+msgstr "Faire un don avec PayPal"
+
+#. Donate window: heading of the Pix section (Pix is Brazil's instant payment system)
+msgid "Pix (Brazil)"
+msgstr "Pix (Brésil)"
+
+#. Donate window: text above the Pix QR code
+msgid "Scan with your bank app, or copy the Pix code:"
+msgstr "Scannez avec votre application bancaire, ou copiez le code Pix :"
+
+#. Donate window button
+msgid "Copy Pix Code"
+msgstr "Copier le code Pix"
+
+#. Shown on the Copy Pix Code button for 2 seconds after clicking it
+msgid "Copied!"
+msgstr "Copié !"
+
+msgid "Installation Finished! You can now safely unplug the drive."
+msgstr "Installation terminée ! Vous pouvez maintenant débrancher la clé en toute sécurité."
+
+#. {} is the error message
+msgid "Error: {}"
+msgstr "Erreur : {}"
+
+msgid "Cannot locate application path"
+msgstr "Impossible de localiser le chemin de l'application"
+
+msgid "Cannot start pkexec: {}"
+msgstr "Impossible de démarrer pkexec : {}"
+
+msgid "Authentication was cancelled or failed."
+msgstr "L'authentification a été annulée ou a échoué."
+
+msgid "The flashing helper exited unexpectedly."
+msgstr "L'assistant de flashage s'est arrêté de manière inattendue."
+
+#. Progress messages sent by the flashing helper
+msgid "Formatting drive {}..."
+msgstr "Formatage du lecteur {}..."
+
+msgid "Extracting install image..."
+msgstr "Extraction de l'image d'installation..."
+
+msgid "Extracting boot files..."
+msgstr "Extraction des fichiers d'amorçage..."
+
+#. {} / {} are megabytes written / total
+msgid "Writing install image: {} / {} MB"
+msgstr "Écriture de l'image d'installation : {} / {} Mo"
+
+msgid "Flushing cache: {} MB left"
+msgstr "Vidé du cache : {} Mo restants"
+
+msgid "Finishing writes, please don't unplug..."
+msgstr "Finalisation de l'écriture, veuillez ne pas débrancher..."
+
+#. Error messages sent by the flashing helper
+msgid "Helper must run as root"
+msgstr "L'assistant doit être exécuté en tant que root"
+
+msgid "Internal error"
+msgstr "Erreur interne"
+
+msgid "Cancelled"
+msgstr "Annulé"
+
+msgid "Device not found: {}"
+msgstr "Périphérique non trouvé : {}"
+
+msgid "Target is not under /dev"
+msgstr "La cible n'est pas sous /dev"
+
+msgid "Cannot stat device: {}"
+msgstr "Impossible d'obtenir les informations du périphérique : {}"
+
+msgid "Target is not a block device"
+msgstr "La cible n'est pas un périphérique bloc"
+
+msgid "lsblk failed: {}"
+msgstr "lsblk a échoué : {}"
+
+msgid "Refusing to write: target is not a USB disk"
+msgstr "Écriture refusée : la cible n'est pas un disque USB"
+
+msgid "ISO not found: {}"
+msgstr "ISO non trouvée : {}"
+
+msgid "ISO path is not a regular file"
+msgstr "Le chemin de l'ISO n'est pas un fichier ordinaire"
+
+msgid "7z failed: {}"
+msgstr "7z a échoué : {}"
+
+msgid "Invalid ISO: install.wim/esd not found"
+msgstr "ISO invalide : install.wim/esd non trouvé"
+
+#. First {} is a size in MB, second {} lists the checked folders
+msgid "Not enough temporary disk space: need {} MB ({}). Free up space and try again."
+msgstr "Espace disque temporaire insuffisant : {} Mo nécessaires ({}). Libérez de l'espace et réessayez."
+
+#. {} is a folder, then the system error
+msgid "Cannot create {}: {}"
+msgstr "Impossible de créer {} : {}"
+
+msgid "Drive disconnected before formatting"
+msgstr "Le lecteur a été déconnecté avant le formatage"
+
+msgid "Partitioning failed (sgdisk). Drive may have been removed."
+msgstr "Le partitionnement a échoué (sgdisk). Le lecteur a peut-être été retiré."
+
+msgid "Partition did not appear after partitioning."
+msgstr "La partition n'est pas apparue après le partitionnement."
+
+msgid "Formatting failed. Drive may have been removed."
+msgstr "Le formatage a échoué. Le lecteur a peut-être été retiré."
+
+msgid "Failed to mount USB drive: {}"
+msgstr "Échec du montage du lecteur USB : {}"
+
+msgid "mount failed: {}"
+msgstr "mount a échoué : {}"
+
+msgid "Failed to extract install.wim/esd from ISO"
+msgstr "Échec de l'extraction de install.wim/esd depuis l'ISO"
+
+msgid "install.esd is larger than 4 GB and cannot be stored on FAT32"
+msgstr "install.esd dépasse 4 Go et ne peut pas être stocké sur du FAT32"
+
+msgid "Drive removed or 7z error during extraction."
+msgstr "Lecteur retiré ou erreur 7z pendant l'extraction."
+
+msgid "Drive removed or error while writing install image."
+msgstr "Lecteur retiré ou erreur lors de l'écriture de l'image d'installation."
+
+msgid "Drive disconnected during final sync."
+msgstr "Lecteur déconnecté pendant la synchronisation finale."
+
+msgid "Drive was unplugged during final sync."
+msgstr "Le lecteur a été débranché pendant la synchronisation finale."
+
+#. {} is a program name, then the system error
+msgid "Failed to start {}: {}"
+msgstr "Échec du démarrage de {} : {}"
+
+msgid "Wait failed: {}"
+msgstr "L'attente a échoué : {}"

@@ -8,7 +8,7 @@ appimagetool*
 *.zsync
 artifacts/
 build/
-
+.idea
 # AppDir content (Ignore the heavy binaries/libs, keep the folders)
 WindUSB.AppDir/bin-local/*
 WindUSB.AppDir/lib-local/*

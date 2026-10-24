@@ -1,0 +1,265 @@
+# WindUSB-GUI translation template
+# This file is distributed under the same license as WindUSB-GUI (GPL-3.0-or-later).
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: windusb-gui\n"
+"Language: eo\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#. Window title
+msgid "WindUSB Creator"
+msgstr "Kreiilo WindUSB"
+
+#. Drive page
+msgid "Select USB Drive"
+msgstr "Elekti USB-diskon"
+
+msgid "Next"
+msgstr "Sekva"
+
+#. ISO page
+msgid "Select Windows ISO"
+msgstr "Elekti ISO-dosieron de Windows"
+
+msgid "Select ISO File"
+msgstr "Elekti ISO-dosieron"
+
+msgid "Click to browse"
+msgstr "Alklaku por foliumi"
+
+msgid "Back"
+msgstr "Reen"
+
+msgid "Flash USB"
+msgstr "Afluki USB-diskon"
+
+#. File chooser buttons (_ marks the keyboard shortcut letter)
+msgid "_Cancel"
+msgstr "_Nuligi"
+
+msgid "_Open"
+msgstr "_Malfermi"
+
+msgid "Windows ISOs (*.iso)"
+msgstr "Windows-ISO-j (*.iso)"
+
+msgid "Selected (Valid)"
+msgstr "Elektita (Valida)"
+
+msgid "Invalid ISO"
+msgstr "Nevalida ISO"
+
+msgid "Missing install.wim/esd"
+msgstr "Mankas install.wim/esd"
+
+#. Confirmation dialog. {} is the drive, e.g. /dev/sdb
+msgid "WARNING: ALL DATA on {} will be DELETED. Proceed?"
+msgstr "AVERTO: ĈIUJ PODATKOJ en {} estos FORSIGITAJ. Ĉi daŭrigi?"
+
+msgid "_Yes"
+msgstr "_Jes"
+
+msgid "_No"
+msgstr "_Ne"
+
+#. Progress page
+msgid "Waiting..."
+msgstr "Atendante..."
+
+msgid "Cancel"
+msgstr "Nuligi"
+
+msgid "Finish & Exit"
+msgstr "Fini kaj eliri"
+
+msgid "Close"
+msgstr "Fermi"
+
+#. Footer link to the PayPal donation page
+msgid "Donate"
+msgstr "Donaci"
+
+#. Shown when the donate link cannot be opened; the link is shown below it
+msgid "Could not open your web browser. You can copy the link below:"
+msgstr "Ne eblis malfermi vian retumilon. Vi povas kopii la suban ligilon:"
+
+#. Main menu (hamburger button) tooltip
+msgid "Main Menu"
+msgstr "Ĉefa menuo"
+
+#. Main menu item
+msgid "About WindUSB"
+msgstr "Pri WindUSB"
+
+#. Main menu item, and the title of the license window
+msgid "License"
+msgstr "Permesilo"
+
+#. Short description in the About window
+msgid "Create bootable Windows USB drives on Linux"
+msgstr "Krei prarestartigeblajn Windows-USB-diskojn en Linukso"
+
+#. About window: heading above the list of third-party tools bundled in the AppImage
+msgid "Bundled tools"
+msgstr "Inkluzivitaj iloj"
+
+#. Title of the donate window
+msgid "Support WindUSB"
+msgstr "Subteni WindUSB"
+
+#. Donate window: text above the payment options
+msgid "WindUSB is free and open source. If it helped you, consider supporting its development:"
+msgstr "WindUSB estas libera kaj malfermkoda. Se ĝi helpis vin, konsideru subteni ĝian disvolvadon:"
+
+#. Donate window button
+msgid "Donate with PayPal"
+msgstr "Donaci per PayPal"
+
+#. Donate window: heading of the Pix section (Pix is Brazil's instant payment system)
+msgid "Pix (Brazil)"
+msgstr "Pix (Brazilo)"
+
+#. Donate window: text above the Pix QR code
+msgid "Scan with your bank app, or copy the Pix code:"
+msgstr "Skanu per via banka aplikaĵo, aŭ kopiu la Pix-kodon:"
+
+#. Donate window button
+msgid "Copy Pix Code"
+msgstr "Kopii Pix-kodon"
+
+#. Shown on the Copy Pix Code button for 2 seconds after clicking it
+msgid "Copied!"
+msgstr "Kopiita!"
+
+msgid "Installation Finished! You can now safely unplug the drive."
+msgstr "Instalado finiĝis! Vi nun povas sekure eltiro/malkonekti la diskon."
+
+#. {} is the error message
+msgid "Error: {}"
+msgstr "Eraro: {}"
+
+msgid "Cannot locate application path"
+msgstr "Ne eblas trovi la vojon de la aplikaĵo"
+
+msgid "Cannot start pkexec: {}"
+msgstr "Ne eblas lansigi pkexec: {}"
+
+msgid "Authentication was cancelled or failed."
+msgstr "Aŭtentigo estis nuligita aŭ malsukcesis."
+
+msgid "The flashing helper exited unexpectedly."
+msgstr "La fluka helpilo neatendite eliris."
+
+#. Progress messages sent by the flashing helper
+msgid "Formatting drive {}..."
+msgstr "Formatante diskon {}..."
+
+msgid "Extracting install image..."
+msgstr "Eltirante instalan bildon..."
+
+msgid "Extracting boot files..."
+msgstr "Eltirante prapartajn dosierojn..."
+
+#. {} / {} are megabytes written / total
+msgid "Writing install image: {} / {} MB"
+msgstr "Skribante instalan bildon: {} / {} MB"
+
+msgid "Flushing cache: {} MB left"
+msgstr "Malplenigante kaŝmemoron: restas {} MB"
+
+msgid "Finishing writes, please don't unplug..."
+msgstr "Finante skribadon, bonvolu ne malkonekti..."
+
+#. Error messages sent by the flashing helper
+msgid "Helper must run as root"
+msgstr "La helpilo devas ruliĝi kiel root"
+
+msgid "Internal error"
+msgstr "Interna eraro"
+
+msgid "Cancelled"
+msgstr "Nuligita"
+
+msgid "Device not found: {}"
+msgstr "Aparato ne trovita: {}"
+
+msgid "Target is not under /dev"
+msgstr "La celo ne estas sub /dev"
+
+msgid "Cannot stat device: {}"
+msgstr "Ne eblas statigi aparaton: {}"
+
+msgid "Target is not a block device"
+msgstr "La celo ne estas blokaparato"
+
+msgid "lsblk failed: {}"
+msgstr "lsblk malsukcesis: {}"
+
+msgid "Refusing to write: target is not a USB disk"
+msgstr "Rilate al skribado: la celo ne estas USB-disko"
+
+msgid "ISO not found: {}"
+msgstr "ISO ne trovita: {}"
+
+msgid "ISO path is not a regular file"
+msgstr "La ISO-vojo ne estas regula dosiero"
+
+msgid "7z failed: {}"
+msgstr "7z malsukcesis: {}"
+
+msgid "Invalid ISO: install.wim/esd not found"
+msgstr "Nevalida ISO: install.wim/esd ne trovita"
+
+#. First {} is a size in MB, second {} lists the checked folders
+msgid "Not enough temporary disk space: need {} MB ({}). Free up space and try again."
+msgstr "Ne sufiĉas provizora diskspaco: bezonataj {} MB ({}). Liberigu spacon kaj reprovu."
+
+#. {} is a folder, then the system error
+msgid "Cannot create {}: {}"
+msgstr "Ne eblas krei {}: {}"
+
+msgid "Drive disconnected before formatting"
+msgstr "Disko malkonektiĝis antaŭ formatado"
+
+msgid "Partitioning failed (sgdisk). Drive may have been removed."
+msgstr "Dispartigo malsukcesis (sgdisk). La disko eble estis forigita."
+
+msgid "Partition did not appear after partitioning."
+msgstr "Partio ne aperis post dispartigo."
+
+msgid "Formatting failed. Drive may have been removed."
+msgstr "Formatado malsukcesis. La disko eble estis forigita."
+
+msgid "Failed to mount USB drive: {}"
+msgstr "Malsukcesis munti USB-diskon: {}"
+
+msgid "mount failed: {}"
+msgstr "mount malsukcesis: {}"
+
+msgid "Failed to extract install.wim/esd from ISO"
+msgstr "Malsukcesis eltiri install.wim/esd el ISO"
+
+msgid "install.esd is larger than 4 GB and cannot be stored on FAT32"
+msgstr "install.esd estas pli granda ol 4 GB kaj ne povas esti konservita en FAT32"
+
+msgid "Drive removed or 7z error during extraction."
+msgstr "Disko forigita aŭ eraro de 7z dum eltiro."
+
+msgid "Drive removed or error while writing install image."
+msgstr "Disko forigita aŭ eraro dum skribado de instala bildo."
+
+msgid "Drive disconnected during final sync."
+msgstr "Disko malkonektiĝis dum fina sinkronigo."
+
+msgid "Drive was unplugged during final sync."
+msgstr "Disko estis eltirita dum fina sinkronigo."
+
+#. {} is a program name, then the system error
+msgid "Failed to start {}: {}"
+msgstr "Malsukcesis lanĉi {}: {}"
+
+msgid "Wait failed: {}"
+msgstr "Atendo malsukcesis: {}"
