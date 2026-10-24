@@ -9,6 +9,8 @@ No Rust knowledge is needed.
 | `windusb.pot` | Template (English source strings, do not translate this one) |
 | `pt_BR.po` | Brazilian Portuguese |
 | `es.po` | Spanish |
+| `fr.po` | French |
+| `eo.po` | Esperanto |
 
 ## Add a new language
 

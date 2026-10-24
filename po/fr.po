@@ -4,11 +4,11 @@
 
 msgid ""
 msgstr ""
-"Project-Id-Version: windusb-gui\\n"
-"Language: fr\\n"
-"MIME-Version: 1.0\\n"
-"Content-Type: text/plain; charset=UTF-8\\n"
-"Content-Transfer-Encoding: 8bit\\n"
+"Project-Id-Version: windusb-gui\n"
+"Language: fr\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
 
 #. Window title
 msgid "WindUSB Creator"
@@ -37,12 +37,12 @@ msgstr "Retour"
 msgid "Flash USB"
 msgstr "Flasher la clé USB"
 
-#. File chooser buttons (\_ marks the keyboard shortcut letter)
-msgid "\_Cancel"
-msgstr "\_Annuler"
+#. File chooser buttons (_ marks the keyboard shortcut letter)
+msgid "_Cancel"
+msgstr "_Annuler"
 
-msgid "\_Open"
-msgstr "\_Ouvrir"
+msgid "_Open"
+msgstr "_Ouvrir"
 
 msgid "Windows ISOs (*.iso)"
 msgstr "ISOs Windows (*.iso)"
@@ -60,11 +60,11 @@ msgstr "install.wim/esd manquant"
 msgid "WARNING: ALL DATA on {} will be DELETED. Proceed?"
 msgstr "AVERTISSEMENT : TOUTES LES DONNÉES sur {} seront SUPPRIMÉES. Continuer ?"
 
-msgid "\_Yes"
-msgstr "\_Oui"
+msgid "_Yes"
+msgstr "_Oui"
 
-msgid "\_No"
-msgstr "\_Non"
+msgid "_No"
+msgstr "_Non"
 
 #. Progress page
 msgid "Waiting..."
